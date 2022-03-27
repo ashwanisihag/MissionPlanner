@@ -970,6 +970,19 @@ namespace MissionPlanner
             LayoutChanged += updateLayout;
             LayoutChanged(null, EventArgs.Empty);
 
+            var custom = new Bitmap(47, 47);
+            using (var g = Graphics.FromImage(custom))
+            {
+                g.FillRectangle(new SolidBrush(System.Drawing.ColorTranslator.FromHtml("#0057b7")), new Rectangle(0, 0, 47, 47 / 2));
+                g.FillRectangle(new SolidBrush(System.Drawing.ColorTranslator.FromHtml("#ffd700")), new Rectangle(0, 47/2, 47, 47 / 2));
+                g.Flush();
+            }
+            MenuCustom.Image = custom;
+            MenuCustom.Click += (s, e) =>
+            {
+                System.Diagnostics.Process.Start("https://www.unicef.org.au/appeals/ukraine-emergency-appeal");
+            };
+
             if (Settings.Instance["CHK_GDIPlus"] != null)
                 GCSViews.FlightData.myhud.opengl = !bool.Parse(Settings.Instance["CHK_GDIPlus"].ToString());
 
