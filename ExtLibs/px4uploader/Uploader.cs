@@ -797,36 +797,37 @@ namespace px4uploader
         }
 
         
-        public void currentChecksum(Firmware fw)
+        public string currentChecksum(Firmware fw)
         {
             if (self.bl_rev < 3)
-                return;
+                return "";
 
             __sync();
 
             this.port.ReadTimeout = 1000; // 1 sec
 
-            bool sameflash = true;
-            bool sameexternalflash = true;
-
+            bool sameflash = false;
+            bool sameexternalflash = false;
+            int expect_crc=0;
+            int report_crc = 0;
             if (self.fw_maxsize > 0)
             {
-                int expect_crc = fw.crc(self.fw_maxsize);
+                expect_crc = fw.crc(self.fw_maxsize);
                 __send(new byte[] {(byte)Code.GET_CRC,
                     (byte) Code.EOC});
-                int report_crc = __recv_int();
+                report_crc = __recv_int();
                 self.__getSync();
 
                 print("FW File 0x" + hexlify(BitConverter.GetBytes(expect_crc)) + " " + expect_crc);
                 print("Current 0x" + hexlify(BitConverter.GetBytes(report_crc)) + " " + report_crc);
 
-                if (expect_crc != report_crc)
-                    sameflash = false;                    
+                if (expect_crc == report_crc)
+                    sameflash = true;                    
             }
 
             if (self.extf_maxsize > 0)
             {
-                int expect_crc = fw.extf_crc(fw.extf_image_size);
+                expect_crc = fw.extf_crc(fw.extf_image_size);
 
                 byte[] size_bytes = BitConverter.GetBytes(fw.extf_image_size);
 
@@ -837,18 +838,29 @@ namespace px4uploader
                 // crc can be slow, give it 10s
                 __wait_for_bytes(4, 30);
 
-                int report_crc = __recv_int();
+                report_crc = __recv_int();
                 self.__getSync();
 
                 print("Ext FW File 0x" + hexlify(BitConverter.GetBytes(expect_crc)) + " " + expect_crc);
                 print("Current 0x" + hexlify(BitConverter.GetBytes(report_crc)) + " " + report_crc);
 
-                if (expect_crc != report_crc)
-                    sameexternalflash = false;
+                if (expect_crc == report_crc)
+                    sameexternalflash = true;
             }
-
-            if (sameflash && sameexternalflash)
-                throw new Exception("Same Firmware. Not uploading");
+            //if (sameflash && sameexternalflash)
+            //{
+            //    throw new Exception("Same Firmware. Not uploading");
+            //}
+            if (sameflash==false && sameexternalflash == false)
+            {
+                return ("CRC Mismatch, firmware CRC is 0x" + hexlify(BitConverter.GetBytes(expect_crc)) + " expected is  0x" + hexlify(BitConverter.GetBytes(report_crc)));
+                //throw new Exception("CRC Mismatch");
+            }
+            else if (sameflash  || sameexternalflash)
+            {
+                return "Same Firmware";
+            }
+            return "OK";
         }
 
         public void identify()

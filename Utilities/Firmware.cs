@@ -20,6 +20,7 @@ using System.Threading.Tasks;
 using System.Windows.Forms;
 using System.Xml;
 using System.Xml.Serialization;
+using static IronPython.Modules._ast;
 
 namespace MissionPlanner.Utilities
 {
@@ -674,7 +675,7 @@ namespace MissionPlanner.Utilities
 
                 log.Info(DateTime.Now.Millisecond + " Portscan done found:" + foundboard);
                 Application.DoEvents();
-
+                string str = "";
                 if (foundboard)
                 {
                     updateProgress(-1, "Connecting");
@@ -684,7 +685,7 @@ namespace MissionPlanner.Utilities
 
                     try
                     {
-                        uploader.currentChecksum(fw);
+                        str=uploader.currentChecksum(fw);
                     }
                     catch (IOException ex)
                     {
@@ -702,15 +703,36 @@ namespace MissionPlanner.Utilities
                         result = false;
                         return false;
                     }
-                    catch
+                    //catch (Exception ex)
+                    //{
+                    //    uploader.__reboot();
+                    //    uploader.close();
+                    //    result = true;
+                    //    if (ex.Message == "Same Firmware. Not uploading")
+                    //    { 
+                    //    CustomMessageBox.Show("Firmware already on board");
+                    //    }
+                    //    else if (ex.Message == "CRC Mismatch")
+                    //    {
+                    //        CustomMessageBox.Show("Invalid CRC, cannot upload firmware. Please contact OEM!");
+                    //    }
+
+                    //    return true;
+                    //}
+                    if (str== "Same Firmware")
                     {
-                        uploader.__reboot();
+                        CustomMessageBox.Show("Both formware are same, no need to upload");
                         uploader.close();
-                        CustomMessageBox.Show(Strings.NoNeedToUpload);
-                        result = true;
+                        result = false;
                         return true;
                     }
-
+                    else 
+                    {
+                        CustomMessageBox.Show(str);
+                        uploader.close();
+                        result = false;
+                        return true;
+                    }
                     try
                     {
                         updateProgress(0, "Upload");

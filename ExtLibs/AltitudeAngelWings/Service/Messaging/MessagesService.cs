@@ -15,9 +15,23 @@ namespace AltitudeAngelWings.Service.Messaging
 
         public Task AddMessageAsync(Message message) => Task.Factory.StartNew(async () =>
         {
+
             try
             {
                 _messageDisplay.AddMessage(message);
+                if(message.Content.Contains("POI:"))
+                {
+                    if(!message.Content.Contains("POI: vehicle pos unavailable") && !message.Content.Contains("POI: failed to get terrain al") && !message.Content.Contains("POI: vehicle pos unavailable"))
+                    {
+                        message.Content = message.Content + "My :";
+                        _messageDisplay.AddMessage(message);
+                    }
+                    else
+                    {
+                        message.Content = message.Content + "Wrong :";
+                        _messageDisplay.AddMessage(message);
+                    }
+                }
                 do
                 {
                     await Task.Delay(TimeSpan.FromMilliseconds(200)).ConfigureAwait(false);

@@ -57,11 +57,22 @@ namespace MissionPlanner.GCSViews
             try
             {
                 BackstageViewPage start = null;
-
+                bool boolSecure = false;
                 if (gotAllParams)
                 {
                     if (MainV2.comPort.BaseStream.IsOpen)
                     {
+
+                        if (MainV2.comPort.MAV.param.ContainsKey("SIHAG_FCID"))
+                        {
+                            if (MainV2.comPort.MAV.param["SIHAG_FCID"].Value == 4)
+                            {
+                                boolSecure = true;
+                                //CustomMessageBox.Show("SihagFC found! Cannot modify parameters for security reason.");
+                            }
+                        }
+                        
+
                         if (MainV2.comPort.MAV.cs.firmware == Firmwares.ArduCopter2)
                             AddBackstageViewPage(typeof(ConfigAC_Fence), Strings.GeoFence);
 
@@ -69,24 +80,36 @@ namespace MissionPlanner.GCSViews
                         {
                             if (MainV2.DisplayConfiguration.displayBasicTuning)
                             {
-                                start = AddBackstageViewPage(typeof(ConfigSimplePids), Strings.BasicTuning);
+                                //if (boolSecure == false)
+                                {
+                                    start = AddBackstageViewPage(typeof(ConfigSimplePids), Strings.BasicTuning);
+                                }
                             }
 
                             if (MainV2.DisplayConfiguration.displayExtendedTuning)
                             {
-                                AddBackstageViewPage(typeof(ConfigArducopter), Strings.ExtendedTuning);
+                                //if (boolSecure == false)
+                                {
+                                    AddBackstageViewPage(typeof(ConfigArducopter), Strings.ExtendedTuning);
+                                }
                             }
                         }
 
                         if (MainV2.comPort.MAV.cs.firmware == Firmwares.ArduPlane)
                         {
-                            start = AddBackstageViewPage(typeof(ConfigArduplane), Strings.BasicTuning);
-                            AddBackstageViewPage(typeof(ConfigArducopter), "QP " + Strings.ExtendedTuning);
+                            //if (boolSecure == false)
+                            {
+                                start = AddBackstageViewPage(typeof(ConfigArduplane), Strings.BasicTuning);
+                                AddBackstageViewPage(typeof(ConfigArducopter), "QP " + Strings.ExtendedTuning);
+                            }
                         }
 
                         if (MainV2.comPort.MAV.cs.firmware == Firmwares.ArduRover)
                         {
-                            start = AddBackstageViewPage(typeof(ConfigArdurover), Strings.BasicTuning);
+                            //if (boolSecure == false)
+                            {
+                                start = AddBackstageViewPage(typeof(ConfigArdurover), Strings.BasicTuning);
+                            }
                         }
 
                         if (MainV2.comPort.MAV.cs.firmware == Firmwares.ArduTracker)
@@ -96,33 +119,51 @@ namespace MissionPlanner.GCSViews
 
                         if (MainV2.DisplayConfiguration.displayStandardParams)
                         {
-                            AddBackstageViewPage(typeof(ConfigFriendlyParams), Strings.StandardParams);
+                            //if (boolSecure == false)
+                            {
+                                AddBackstageViewPage(typeof(ConfigFriendlyParams), Strings.StandardParams);
+                            }
                         }
 
                         if (MainV2.DisplayConfiguration.displayAdvancedParams)
                         {
-                            AddBackstageViewPage(typeof(ConfigFriendlyParamsAdv), Strings.AdvancedParams, null, true);
+                            //if (boolSecure == false)
+                            {
+                                AddBackstageViewPage(typeof(ConfigFriendlyParamsAdv), Strings.AdvancedParams, null, true);
+                            }
                         }
 
                         if (!Program.MONO && ConfigOSD.IsApplicable() && MainV2.DisplayConfiguration.displayOSD)
                         {
-                            AddBackstageViewPage(typeof(ConfigOSD), Strings.OnboardOSD);
+                            //if (boolSecure == false)
+                            {
+                                AddBackstageViewPage(typeof(ConfigOSD), Strings.OnboardOSD);
+                            }
                         }
 
-                        if ((MainV2.comPort.MAV.cs.capabilities & (int) MAVLink.MAV_PROTOCOL_CAPABILITY.FTP) > 0)
-                            AddBackstageViewPage(typeof(MavFTPUI), Strings.MAVFtp);
+                        if ((MainV2.comPort.MAV.cs.capabilities & (int)MAVLink.MAV_PROTOCOL_CAPABILITY.FTP) > 0 && MainV2.DisplayConfiguration.mavFTP)
+                           //if (boolSecure == false)
+                            {
+                                AddBackstageViewPage(typeof(MavFTPUI), Strings.MAVFtp);
+                            }
 
                         if (MainV2.DisplayConfiguration.displayUserParam)
                         {
-                            AddBackstageViewPage(typeof(ConfigUserDefined), Strings.User_Params);
+                            //if (boolSecure == false)
+                            {
+                                AddBackstageViewPage(typeof(ConfigUserDefined), Strings.User_Params);
+                            }
                         }
                     }
                 }
 
-                if (MainV2.DisplayConfiguration.displayFullParamList)
+                if (MainV2.DisplayConfiguration.displayFullParamList)//Ashwani Sihag
                 {
-                    if(!MainV2.comPort.BaseStream.IsOpen || gotAllParams)
-                        AddBackstageViewPage(typeof(ConfigRawParams), Strings.FullParameterList, null, false);
+                    if (!MainV2.comPort.BaseStream.IsOpen || gotAllParams)
+                        //if (boolSecure == false)
+                        {
+                           //AddBackstageViewPage(typeof(ConfigRawParams), Strings.FullParameterList, null, false);
+                        }
                 }
                 if (MainV2.comPort.BaseStream.IsOpen)
                 {
@@ -169,7 +210,7 @@ namespace MissionPlanner.GCSViews
 
 
                 if (backstageView.SelectedPage == null && start != null)
-                    this.BeginInvoke((Action) delegate
+                    this.BeginInvoke((Action)delegate
                     {
                         try
                         {

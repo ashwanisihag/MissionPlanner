@@ -6274,5 +6274,10 @@ namespace MissionPlanner.GCSViews
                 CustomMessageBox.Show(Strings.CommandFailed + ex.ToString(), Strings.ERROR);
             }
         }
+
+        private void button1_Click(object sender, EventArgs e)
+        {
+            CustomMessageBox.Show("Invalid Tag. Must be a number from 0 to 65535");
+        }
     }
 }

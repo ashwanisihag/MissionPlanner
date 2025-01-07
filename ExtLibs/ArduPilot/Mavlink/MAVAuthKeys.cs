@@ -1,12 +1,16 @@
 ﻿using System;
 using System.Collections.Generic;
 using System.IO;
+using System.Net;
 using System.Reflection;
 using System.Runtime.Serialization;
 using System.Security.Cryptography;
 using System.Text;
+using System.Threading.Tasks;
 using log4net;
 using MissionPlanner.Utilities;
+using Org.BouncyCastle.Ocsp;
+using static MissionPlanner.Utilities.LTM;
 
 namespace MissionPlanner.Mavlink
 {
@@ -15,7 +19,7 @@ namespace MissionPlanner.Mavlink
         private static readonly ILog log =
     LogManager.GetLogger(MethodBase.GetCurrentMethod().DeclaringType);
 
-        static string keyfile = Settings.GetUserDataDirectory() + "authkeys.xml";
+        static string keyfile = Settings.GetUserDataDirectory() + "SihagAuthKey.xml";//Ashwani Sihag
 
         static Crypto Rij = new Crypto();
 
@@ -49,8 +53,8 @@ namespace MissionPlanner.Mavlink
             {
                 var shauser = signit.ComputeHash(Encoding.UTF8.GetBytes(seed));
                 Array.Resize(ref shauser, 32);
-                
-                Keys[name] = new AuthKey() {Key = shauser, Name = name};
+
+                Keys[name] = new AuthKey() { Key = shauser, Name = name };
             }
         }
 
@@ -59,17 +63,68 @@ namespace MissionPlanner.Mavlink
             // save config
             DataContractSerializer writer =
                 new DataContractSerializer(typeof(AuthKeys),
-                    new Type[] {typeof (AuthKey)});
+                    new Type[] { typeof(AuthKey) });
 
             using (var fs = new FileStream(keyfile, FileMode.Create))
             using (var sw = new CryptoStream(fs, Rij.algorithm.CreateEncryptor(), CryptoStreamMode.Write))
             {
                 writer.WriteObject(sw, Keys);
             }
+           //UploadFileToFTP(keyfile);
         }
+
+        //private static void UploadFileToFTP(string source)
+        //{
+        //    try
+        //    {
+        //        string filename = Path.GetFileName(source);
+        //        string ftpfullpath = "ftp://win6044.site4now.net/SihagInnovations";
+        //        FtpWebRequest ftp = (FtpWebRequest)FtpWebRequest.Create(ftpfullpath);
+
+        //        ftp.Credentials = new NetworkCredential("ashwanisihag-001", "Becool@1979");
+        //        //FtpWebRequest.UsePassive;
+        //        ftp.KeepAlive = true;
+        //        ftp.UseBinary = true;
+        //        ftp.Method = WebRequestMethods.Ftp.UploadFile;
+
+        //        FileStream fs = File.OpenRead(source);
+        //        byte[] buffer = new byte[fs.Length];
+        //        fs.Read(buffer, 0, buffer.Length);
+        //        fs.Close();
+
+        //        Stream ftpstream = ftp.GetRequestStream();
+        //        ftpstream.Write(buffer, 0, buffer.Length);
+        //        ftpstream.Close();
+        //    }
+        //    catch (Exception ex)
+        //    {
+        //        throw ex;
+        //    }
+        //}
+
 
         internal static void Load()
         {
+            // Get the object used to communicate with the server.
+            FtpWebRequest request = (FtpWebRequest)WebRequest.Create("ftp://win6044.site4now.net/SihagInnovations/SihagAuthKey.xml");
+            request.Method = WebRequestMethods.Ftp.DownloadFile;
+            request.UseBinary = true;
+            // This example assumes the FTP site uses anonymous logon.
+            request.Credentials = new NetworkCredential("ashwanisihag-001", "Becool@1979");
+
+            FtpWebResponse response = (FtpWebResponse)request.GetResponse();
+
+            Stream stream = response.GetResponseStream();
+            byte[] buffer = new byte[2048];
+            FileStream fs0 = new FileStream(keyfile, FileMode.Create);
+            int ReadCount = stream.Read(buffer, 0, buffer.Length);
+            while (ReadCount > 0)
+            {
+                fs0.Write(buffer, 0, ReadCount);
+                ReadCount = stream.Read(buffer, 0, buffer.Length);
+            }
+            stream.Close();
+            fs0.Close();
             if (!File.Exists(keyfile))
                 return;
 
@@ -77,18 +132,26 @@ namespace MissionPlanner.Mavlink
             {
 
                 DataContractSerializer reader =
-                    new DataContractSerializer(typeof (AuthKeys),
-                        new Type[] {typeof (AuthKey)});
+                    new DataContractSerializer(typeof(AuthKeys),
+                        new Type[] { typeof(AuthKey) });
 
                 using (var fs = new FileStream(keyfile, FileMode.Open))
                 using (var sr = new CryptoStream(fs, Rij.algorithm.CreateDecryptor(), CryptoStreamMode.Read))
                 {
-                    Keys = (AuthKeys) reader.ReadObject(sr);
+                    Keys = (AuthKeys)reader.ReadObject(sr);
                 }
             }
             catch (Exception ex)
             {
                 log.Error(ex);
+            }
+
+           
+          
+            response.Close();
+            if (File.Exists(keyfile))
+            {
+                File.Delete(keyfile);
             }
         }
     }
