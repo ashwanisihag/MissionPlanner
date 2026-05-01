@@ -5,6 +5,7 @@
     <OutputTypeEx>library</OutputTypeEx>
     <AssemblyName>MissionPlanner.Maps</AssemblyName>
     <RootNamespace>MissionPlanner.Maps</RootNamespace>
+    <GenerateResourceUsePreserializedResources>true</GenerateResourceUsePreserializedResources>
 
   </PropertyGroup>
 

@@ -237,7 +237,7 @@ namespace MissionPlanner
             }
             set
             {
-                log.InfoFormat("set giveComport {0} current {1} new {2}", Thread.CurrentThread.Name, _giveComport,
+                log.DebugFormat("set giveComport {0} current {1} new {2}", Thread.CurrentThread.Name, _giveComport,
                     value);
                 if (_giveComport && value)
                 {
@@ -2613,7 +2613,7 @@ Mission Planner waits for 2 valid heartbeat packets before connecting");
                 param7 = p7
             };
 
-            log.InfoFormat("doCommand cmd {0} {1} {2} {3} {4} {5} {6} {7}", actionid.ToString(), p1, p2, p3, p4, p5, p6,
+            log.DebugFormat("doCommand cmd {0} {1} {2} {3} {4} {5} {6} {7}", actionid.ToString(), p1, p2, p3, p4, p5, p6,
                 p7);
 
             if (requireack)
@@ -3117,7 +3117,7 @@ Mission Planner waits for 2 valid heartbeat packets before connecting");
                 return;
             }
 
-            log.InfoFormat("Request stream {0} at {1} hz for {2}:{3}",
+            log.DebugFormat("Request stream {0} at {1} hz for {2}:{3}",
                 Enum.Parse(typeof(MAV_DATA_STREAM), id.ToString()), hzrate, sysid, compid);
             getDatastream((byte)sysid, (byte)compid, id, hzrate);
         }
@@ -5277,7 +5277,7 @@ Mission Planner waits for 2 valid heartbeat packets before connecting");
                         int ind = logdata.IndexOf('\0');
                         if (ind != -1)
                             logdata = logdata.Substring(0, ind);
-                        log.Info(DateTime.Now + " " + sev + " " + logdata);
+                        log.Debug(DateTime.Now + " " + sev + " " + logdata);
 
                         MAVlist[sysid, compid].cs.messages.Add((DateTime.Now, logdata));
 
@@ -5458,7 +5458,7 @@ Mission Planner waits for 2 valid heartbeat packets before connecting");
         public int SubscribeToPacketType(MAVLINK_MSG_ID msgid,
             Func<MAVLinkMessage, bool> function, byte sysid, byte compid, bool exclusive = false)
         {
-            log.Info($"SubscribeToPacketType {msgid} {function} {exclusive} {sysid} {compid}");
+            log.Debug($"SubscribeToPacketType {msgid} {function} {exclusive} {sysid} {compid}");
 
             var item = (msgid, function, exclusive, sysid, compid);
 

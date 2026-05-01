@@ -57,6 +57,7 @@
   </PropertyGroup>
   <PropertyGroup>
     <RootNamespace>MissionPlanner</RootNamespace>
+    <GenerateResourceUsePreserializedResources>true</GenerateResourceUsePreserializedResources>
   </PropertyGroup>
   <PropertyGroup>
     <AutoGenerateBindingRedirects>true</AutoGenerateBindingRedirects>
@@ -603,7 +604,7 @@
     </PackageReference>
     <PackageReference Include="Flurl" version="3.0.2" targetFramework="net462" />
     <PackageReference Include="Flurl.Http" version="3.2.0" targetFramework="net462" />
-    <PackageReference Include="GDAL" Version="2.3.2" />
+    <PackageReference Include="GDAL" Version="3.11.3" />
     <PackageReference Include="GDAL.Native">
       <Version>2.3.2</Version>
     </PackageReference>
@@ -657,6 +658,7 @@
     </PackageReference>
     <PackageReference Include="System.Drawing.Common" Version="4.7.2" />
     <PackageReference Include="System.IO.Ports" Version="4.7.0" />
+    <PackageReference Include="System.Resources.Extensions" Version="6.0.0" />
     <PackageReference Include="System.Reactive" Version="4.0.0" />
     <PackageReference Include="System.Reactive.Core" Version="4.0.0" />
     <PackageReference Include="System.Reactive.Linq" Version="4.0.0" />
@@ -674,6 +676,9 @@
     <PackageReference Include="WebSocket4Net" Version="0.15.2" ExcludeAssets="Compile" GeneratePathProperty="true" />
     <Reference Include="WebSocket4Net">
       <HintPath>$(NuGetPackageRoot)\websocket4net\0.15.2\lib\netstandard1.3\WebSocket4Net.dll</HintPath>
+    </Reference>
+    <Reference Include="System.Resources.Extensions">
+      <HintPath>$(NuGetPackageRoot)\system.resources.extensions\6.0.0\lib\net461\System.Resources.Extensions.dll</HintPath>
     </Reference>
   </ItemGroup>
   <ItemGroup>
@@ -1109,6 +1114,9 @@
     <Compile Include="Controls\AuthKeys.cs">
       <SubType>Form</SubType>
     </Compile>
+    <Compile Include="Controls\ComplianceIndicator.cs">
+      <SubType>UserControl</SubType>
+    </Compile>
     <Compile Include="Controls\ConnectionControl.cs">
       <SubType>UserControl</SubType>
     </Compile>
@@ -1390,6 +1398,12 @@
       <SubType>UserControl</SubType>
     </Compile>
     <Compile Include="GCSViews\InitialSetup.cs">
+      <SubType>UserControl</SubType>
+    </Compile>
+    <Compile Include="GCSViews\Security.cs">
+      <SubType>UserControl</SubType>
+    </Compile>
+    <Compile Include="GCSViews\ProtectedFirmware.cs">
       <SubType>UserControl</SubType>
     </Compile>
     <Compile Include="GCSViews\SoftwareConfig.cs">
@@ -3209,6 +3223,7 @@
     </EmbeddedResource>
     <EmbeddedResource Include="GCSViews\ConfigurationView\ConfigBatteryMonitoring.resx">
       <DependentUpon>ConfigBatteryMonitoring.cs</DependentUpon>
+      <SubType>Designer</SubType>
     </EmbeddedResource>
     <EmbeddedResource Include="GCSViews\ConfigurationView\ConfigBatteryMonitoring.ar.resx">
       <DependentUpon>ConfigBatteryMonitoring.cs</DependentUpon>
@@ -3260,6 +3275,7 @@
     </EmbeddedResource>
     <EmbeddedResource Include="GCSViews\ConfigurationView\ConfigBatteryMonitoring2.resx">
       <DependentUpon>ConfigBatteryMonitoring2.cs</DependentUpon>
+      <SubType>Designer</SubType>
     </EmbeddedResource>
     <EmbeddedResource Include="GCSViews\ConfigurationView\ConfigBatteryMonitoring2.ar.resx">
       <DependentUpon>ConfigBatteryMonitoring2.cs</DependentUpon>
@@ -4468,6 +4484,7 @@
     </EmbeddedResource>
     <EmbeddedResource Include="Grid\GridUI.resx">
       <DependentUpon>GridUI.cs</DependentUpon>
+      <SubType>Designer</SubType>
     </EmbeddedResource>
     <EmbeddedResource Include="Grid\GridUI.ru-KZ.resx">
       <DependentUpon>GridUI.cs</DependentUpon>
@@ -4863,6 +4880,7 @@
     <Content Include="aircraft.xml">
       <CopyToOutputDirectory>Always</CopyToOutputDirectory>
     </Content>
+    <None Include="bin\Debug\net461\logo2.png" />
     <Content Include="Drivers\CubeOrangePlus.inf">
       <CopyToOutputDirectory>Always</CopyToOutputDirectory>
     </Content>

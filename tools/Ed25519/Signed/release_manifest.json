@@ -1,0 +1,38 @@
+{
+  "schemaVersion": "1.0",
+  "manifestType": "ardupilot-secure-release",
+  "generatedAtUtc": "2026-05-01T17:18:56.1672401Z",
+  "board": "Pixhawk6C",
+  "keyEvidence": {
+    "privateKeyFile": "Pixhawk6C_private_key.dat",
+    "publicKeyFile": "Pixhawk6C_public_key.dat",
+    "privateKeySha": "0DEE52C2532A3EA98A691EE5F24EDEEBE37C71B5CB6C1FAC7BF5238934D7F3F4",
+    "publicKeySha": "E979949A5C84A7B5C079D5C69499211D6D96E735BE5ADABE46AE23EE3316ACF5"
+  },
+  "checksumPartitions": {
+    "algorithm": "SHA2-256",
+    "code": {
+      "itemCount": 2,
+      "aggregateSha256": "67C3E8F98EC2B477E13B95EE466477560C60E92C19FE4B234A4AC63477818CA7"
+    },
+    "data": {
+      "itemCount": 0,
+      "aggregateSha256": "E3B0C44298FC1C149AFBF4C8996FB92427AE41E4649B934CA495991B7852B855"
+    }
+  },
+  "artifacts": [
+    {
+      "relativePath": "Signed/Firmware/arducopter-signed.apj",
+      "sizeBytes": 1506188,
+      "sha256": "6B754DF58F246AFC93F8DC835AABEC4193B1C3BA4694ED1FA9BD1F2C614079BB",
+      "artifactClass": "code"
+    },
+    {
+      "relativePath": "Signed/Bootloader/AP_Bootloader-signed.bin",
+      "sizeBytes": 54604,
+      "sha256": "6213338F765FF28C8E2184E8D832D777A433846D7E047DF6CD1C98F673DA43E9",
+      "artifactClass": "code"
+    }
+  ],
+  "note": "Use manifest + detached checksum for audit traceability."
+}

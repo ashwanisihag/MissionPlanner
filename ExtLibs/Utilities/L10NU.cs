@@ -41,7 +41,7 @@ namespace MissionPlanner.Utilities
             }
         }
 
-        public static string GetString(string key)
+        public static string GetString(string key, string defaultTo)
         {
             if (strings.ContainsKey(key))
             {

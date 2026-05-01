@@ -548,6 +548,8 @@ namespace MissionPlanner
 
         public GCSViews.FlightPlanner FlightPlanner;
         GCSViews.SITL Simulation;
+        private ToolStripButton MenuSecurity;
+        private ToolStripButton MenuProtectedFirmware;
 
         private Form connectionStatsForm;
         private ConnectionStats _connectionStats;
@@ -766,6 +768,9 @@ namespace MissionPlanner
             }
 
             InitializeComponent();
+
+            InitializeSecurityMenuButton();
+            InitializeProtectedFirmwareMenuButton();
 
             //Init Theme table and load BurntKermit as a default
             ThemeManager.thmColor = new ThemeColorTable(); //Init colortable
@@ -1236,6 +1241,10 @@ namespace MissionPlanner
             MenuInitConfig.Image = displayicons.initsetup;
             MenuSimulation.Image = displayicons.sim;
             MenuConfigTune.Image = displayicons.config_tuning;
+            if (MenuSecurity != null)
+                MenuSecurity.Image = displayicons.config_tuning;
+            if (MenuProtectedFirmware != null)
+                MenuProtectedFirmware.Image = displayicons.config_tuning;
             MenuConnect.Image = displayicons.connect;
             MenuHelp.Image = displayicons.help;
 
@@ -1245,8 +1254,46 @@ namespace MissionPlanner
             MenuInitConfig.ForeColor = ThemeManager.TextColor;
             MenuSimulation.ForeColor = ThemeManager.TextColor;
             MenuConfigTune.ForeColor = ThemeManager.TextColor;
+            if (MenuSecurity != null)
+                MenuSecurity.ForeColor = ThemeManager.TextColor;
+            if (MenuProtectedFirmware != null)
+                MenuProtectedFirmware.ForeColor = ThemeManager.TextColor;
             MenuConnect.ForeColor = ThemeManager.TextColor;
             MenuHelp.ForeColor = ThemeManager.TextColor;
+        }
+
+        private void InitializeSecurityMenuButton()
+        {
+            MenuSecurity = new ToolStripButton();
+            MenuSecurity.ForeColor = SystemColors.ControlLight;
+            MenuSecurity.Margin = new Padding(0);
+            MenuSecurity.Name = "MenuSecurity";
+            MenuSecurity.Text = "SECURITY";
+            MenuSecurity.TextImageRelation = TextImageRelation.ImageAboveText;
+            MenuSecurity.Click += MenuSecurity_Click;
+
+            int insertIndex = MainMenu.Items.IndexOf(MenuConfigTune);
+            if (insertIndex < 0)
+                MainMenu.Items.Add(MenuSecurity);
+            else
+                MainMenu.Items.Insert(insertIndex + 1, MenuSecurity);
+        }
+
+        private void InitializeProtectedFirmwareMenuButton()
+        {
+            MenuProtectedFirmware = new ToolStripButton();
+            MenuProtectedFirmware.ForeColor = SystemColors.ControlLight;
+            MenuProtectedFirmware.Margin = new Padding(0);
+            MenuProtectedFirmware.Name = "MenuProtectedFirmware";
+            MenuProtectedFirmware.Text = "PROTECTED FW";
+            MenuProtectedFirmware.TextImageRelation = TextImageRelation.ImageAboveText;
+            MenuProtectedFirmware.Click += MenuProtectedFirmware_Click;
+
+            int insertIndex = MainMenu.Items.IndexOf(MenuSecurity);
+            if (insertIndex < 0)
+                MainMenu.Items.Add(MenuProtectedFirmware);
+            else
+                MainMenu.Items.Insert(insertIndex + 1, MenuProtectedFirmware);
         }
 
         void adsb_UpdatePlanePosition(object sender, MissionPlanner.Utilities.adsb.PointLatLngAltHdg adsb)
@@ -1445,6 +1492,18 @@ namespace MissionPlanner
                     MyView.ShowScreen("SWConfig");
                 }
             }
+        }
+
+        private void MenuSecurity_Click(object sender, EventArgs e)
+        {
+            new AuthKeys().Show();
+            SaveConfig();
+        }
+
+        private void MenuProtectedFirmware_Click(object sender, EventArgs e)
+        {
+            MyView.ShowScreen("ProtectedFirmware");
+            SaveConfig();
         }
 
         private void MenuTerminal_Click(object sender, EventArgs e)
@@ -2382,7 +2441,7 @@ namespace MissionPlanner
         {
             try
             {
-                log.Info("Saving config");
+                log.Debug("Saving config");
                 Settings.Instance.ComPort = comPortName;
 
                 if (_connectionControl != null)
@@ -3271,6 +3330,7 @@ namespace MissionPlanner
             MyView.AddScreen(new MainSwitcher.Screen("FlightPlanner", FlightPlanner, true));
             MyView.AddScreen(new MainSwitcher.Screen("HWConfig", typeof(GCSViews.InitialSetup), true));
             MyView.AddScreen(new MainSwitcher.Screen("SWConfig", typeof(GCSViews.SoftwareConfig), true));
+            MyView.AddScreen(new MainSwitcher.Screen("ProtectedFirmware", typeof(GCSViews.ProtectedFirmware), true));
             MyView.AddScreen(new MainSwitcher.Screen("Simulation", Simulation, true));
             MyView.AddScreen(new MainSwitcher.Screen("Help", typeof(GCSViews.Help), true));
 
@@ -4772,7 +4832,7 @@ namespace MissionPlanner
         {
             try
             {
-                System.Diagnostics.Process.Start("https://ardupilot.org/?utm_source=Menu&utm_campaign=MP");
+                System.Diagnostics.Process.Start("http://sihaginnovations.com/");
             }
             catch
             {

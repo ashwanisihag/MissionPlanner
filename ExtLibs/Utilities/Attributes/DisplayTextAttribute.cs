@@ -46,7 +46,7 @@ namespace MissionPlanner.Attributes
       /// <value>The text.</value>
       public string Text
       {
-         get { return MissionPlanner.Utilities.L10NU.GetString(_text); }
+         get { return MissionPlanner.Utilities.L10NU.GetString(_text, _text); }
       }
 
    }

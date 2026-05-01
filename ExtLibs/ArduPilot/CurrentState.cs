@@ -1107,7 +1107,7 @@ namespace MissionPlanner
                 // check against get
                 if (messageHigh == value)
                     return;
-                log.Info("messageHigh " + value);
+                log.Debug("messageHigh " + value);
                 _messageHighTime = DateTime.Now;
                 _messagehigh = value;
                 messageHighSeverity = MAVLink.MAV_SEVERITY.EMERGENCY;

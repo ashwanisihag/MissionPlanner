@@ -296,7 +296,7 @@ namespace MissionPlanner.GCSViews
                     AddBackstageViewPage(typeof(ConfigFFT), "FFT Setup", isConnected && gotAllParams, opt);
                 }
             }
-            if (MainV2.DisplayConfiguration.isAdvancedMode)
+            //if (MainV2.DisplayConfiguration.isAdvancedMode)
             {
                 var adv = AddBackstageViewPage(typeof(ConfigAdvanced), "Advanced");
 

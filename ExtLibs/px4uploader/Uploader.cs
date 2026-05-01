@@ -441,8 +441,27 @@ namespace px4uploader
             int pos = 0;
             while (pos < count)
             {
-                pos += port.Read(c, pos, count - pos);
-                if (count >= 4 && c[0] == (byte)Code.INSYNC && c[1] == (byte)Code.INVALID)
+                try
+                {
+                    pos += port.Read(c, pos, count - pos);
+                }
+                catch (TimeoutException ex)
+                {
+                    string portName = "unknown";
+                    try
+                    {
+                        portName = port.PortName;
+                    }
+                    catch
+                    {
+                    }
+
+                    throw new TimeoutException(
+                        string.Format("Timeout while reading bootloader response on {0} ({1}/{2} bytes received)",
+                            portName, pos, count), ex);
+                }
+
+                if (pos >= 2 && c[0] == (byte)Code.INSYNC && c[1] == (byte)Code.INVALID)
                     throw new Exception("Bad Request INSYNC INVALID");
             }
 
@@ -804,7 +823,7 @@ namespace px4uploader
 
             __sync();
 
-            this.port.ReadTimeout = 1000; // 1 sec
+            this.port.ReadTimeout = 3000; // Some bootloaders need >1s to answer CRC/verify reads.
 
             bool sameflash = false;
             bool sameexternalflash = false;
@@ -929,14 +948,13 @@ namespace px4uploader
 
         public void upload(Firmware fw)
         {
-            this.port.ReadTimeout = 1000; // 1 sec
+            this.port.ReadTimeout = 3000; // Keep read window wide enough for verify responses.
 
             //Make sure we are doing the right thing
-            if (self.board_type != fw.board_id)
+            if (!IsFirmwareBoardCompatible(fw.board_id))
             {
-                if (!(self.board_type == 33 && fw.board_id == 9))
-                    throw new Exception("Firmware not suitable for this board fw:" + fw.board_id + " - board:" +
-                                        self.board_type);
+                throw new Exception("Firmware not suitable for this board fw:" + fw.board_id + " - board:" +
+                                    self.board_type);
             }
 
             if (self.fw_maxsize < fw.image_size && self.fw_maxsize != 0)
@@ -982,6 +1000,29 @@ namespace px4uploader
                 self.port.Close();
             }
             catch { }
+        }
+
+        private bool IsFirmwareBoardCompatible(int firmwareBoardId)
+        {
+            if (self.board_type == firmwareBoardId)
+                return true;
+
+            // Legacy mapping: bootloader reports board 33 for FMUv2 firmware board 9.
+            if (self.board_type == 33 && firmwareBoardId == 9)
+                return true;
+
+            // SaamPix/PX4 bootloader alias observed on VID_26AC&PID_008E and VID_26AC&PID_0030.
+            // Keep this exception narrow to avoid permitting unrelated board mismatches.
+            if ((self.board_type == 200 && firmwareBoardId == 1124) ||
+                (self.board_type == 1124 && firmwareBoardId == 200))
+                return true;
+
+            // SaapPix observed alias mapping.
+            if ((self.board_type == 88 && firmwareBoardId == 1207) ||
+                (self.board_type == 1207 && firmwareBoardId == 88))
+                return true;
+
+            return false;
         }
 
         public int len(byte[] data)

@@ -20,7 +20,7 @@ namespace MissionPlanner.Utilities
 
             var match = versionregex.Match(input);
 
-            log.Info(input);
+            log.Debug(input);
 
             if (match.Success)
             {
@@ -49,7 +49,7 @@ namespace MissionPlanner.Utilities
 
                 Version version = new Version(verstring);
 
-                log.Info(version.ToString());
+                log.Debug(version.ToString());
 
                 return version;
             }

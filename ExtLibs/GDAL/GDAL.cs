@@ -26,7 +26,7 @@ namespace GDAL
 
         static GDAL()
         {
-            log.InfoFormat("GDAL static ctor");
+            log.DebugFormat("GDAL static ctor");
             try
             {
                 string executingAssemblyFile = new Uri(Assembly.GetExecutingAssembly().GetName().CodeBase).LocalPath;
@@ -42,7 +42,7 @@ namespace GDAL
             }
             catch(Exception ex)
             {
-                log.Error(ex);
+                log.Debug(ex);
             }
 
             try
@@ -51,7 +51,7 @@ namespace GDAL
             }
             catch (Exception ex)
             {
-                log.Error(ex);
+                log.Debug(ex);
             }
 
             try
@@ -60,18 +60,18 @@ namespace GDAL
             }
             catch (Exception ex)
             {
-                log.Error(ex);
+                log.Debug(ex);
             }
 
             try
             {
-                log.InfoFormat("GDAL static ctor - SpatialReference");
+                log.DebugFormat("GDAL static ctor - SpatialReference");
                 WGS84srs = new SpatialReference(null);
                 WGS84srs.ImportFromEPSG(4326);
             }
             catch (Exception ex)
             {
-                log.Error(ex);
+                log.Debug(ex);
             }
         }
 

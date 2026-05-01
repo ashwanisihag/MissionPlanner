@@ -105,26 +105,30 @@ namespace MissionPlanner.Mavlink
 
         internal static void Load()
         {
-            // Get the object used to communicate with the server.
-            FtpWebRequest request = (FtpWebRequest)WebRequest.Create("ftp://win6044.site4now.net/SihagInnovations/SihagAuthKey.xml");
-            request.Method = WebRequestMethods.Ftp.DownloadFile;
-            request.UseBinary = true;
-            // This example assumes the FTP site uses anonymous logon.
-            request.Credentials = new NetworkCredential("ashwanisihag-001", "Becool@1979");
-
-            FtpWebResponse response = (FtpWebResponse)request.GetResponse();
-
-            Stream stream = response.GetResponseStream();
-            byte[] buffer = new byte[2048];
-            FileStream fs0 = new FileStream(keyfile, FileMode.Create);
-            int ReadCount = stream.Read(buffer, 0, buffer.Length);
-            while (ReadCount > 0)
+            try
             {
-                fs0.Write(buffer, 0, ReadCount);
-                ReadCount = stream.Read(buffer, 0, buffer.Length);
+                // Try to refresh from the remote store. Failures must not break UI initialization.
+                FtpWebRequest request = (FtpWebRequest)WebRequest.Create("ftp://win6044.site4now.net/SihagInnovations/SihagAuthKey.xml");
+                request.Method = WebRequestMethods.Ftp.DownloadFile;
+                request.UseBinary = true;
+                request.Credentials = new NetworkCredential("ashwanisihag-001", "Becool@1979");
+
+                using (FtpWebResponse response = (FtpWebResponse)request.GetResponse())
+                using (Stream stream = response.GetResponseStream())
+                using (FileStream fs0 = new FileStream(keyfile, FileMode.Create, FileAccess.Write, FileShare.None))
+                {
+                    if (stream != null)
+                    {
+                        stream.CopyTo(fs0);
+                    }
+                }
             }
-            stream.Close();
-            fs0.Close();
+            catch (Exception ex)
+            {
+                // Expected in environments where FTP credentials are invalid or unreachable.
+                log.Warn("Unable to download MAVLink auth keys from FTP. Falling back to local key store.", ex);
+            }
+
             if (!File.Exists(keyfile))
                 return;
 
@@ -146,13 +150,6 @@ namespace MissionPlanner.Mavlink
                 log.Error(ex);
             }
 
-           
-          
-            response.Close();
-            if (File.Exists(keyfile))
-            {
-                File.Delete(keyfile);
-            }
         }
     }
 }

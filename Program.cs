@@ -522,11 +522,22 @@ namespace MissionPlanner
         private static void CurrentDomain_FirstChanceException(object sender,
             System.Runtime.ExceptionServices.FirstChanceExceptionEventArgs e)
         {
+            if (e.Exception.Source == "MissionPlanner.Comms" &&
+                e.Exception.Message == "CommsInjection Timeout on read")
+                return;
+            if (e.Exception.Source == "System" &&
+                (e.Exception is ObjectDisposedException ode && ode.ObjectName != null && ode.ObjectName.Contains("Socket") ||
+                 e.Exception is System.Security.Cryptography.CryptographicException ||
+                 e.Exception is System.NotSupportedException nse && nse.Message.Contains("certificate key")))
+                return;
             log.Debug("FirstChanceException in: " + e.Exception.Source, e.Exception);
         }
 
         private static Assembly CurrentDomain_TypeResolve(object sender, ResolveEventArgs args)
         {
+            // Suppress OID lookup failures (e.g. "2.5.29.35", "1.3.6.1.5.5.7.1.1")
+            if (args.Name != null && args.Name.Length > 0 && char.IsDigit(args.Name[0]))
+                return null;
             log.Debug("TypeResolve Failed: " + args.Name + " from " + args.RequestingAssembly);
             return null;
         }

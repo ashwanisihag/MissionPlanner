@@ -106,9 +106,9 @@ namespace MissionPlanner.Controls
 
             try
             {
-                log.Info("DoWork");
+                log.Debug("DoWork");
                 if (this.DoWork != null) this.DoWork(this);
-                log.Info("DoWork Done");
+                log.Debug("DoWork Done");
             }
             catch(Exception e)
             {

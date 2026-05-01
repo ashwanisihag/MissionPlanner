@@ -106,7 +106,7 @@ namespace MissionPlanner.ArduPilot
 
                 try
                 {
-                    log.Info(url);
+                    log.Debug(url);
 
                     var client = new HttpClient();
 
@@ -123,7 +123,7 @@ namespace MissionPlanner.ArduPilot
 
                     Manifest = JsonConvert.DeserializeObject<ManifestRoot>(manifest);
 
-                    log.Info(Manifest.Firmware?.Length);
+                    log.Debug(Manifest.Firmware?.Length);
 
                     APFirmware.GetListAppend("https://raw.githubusercontent.com/CubePilot/periph-manifest/main/manifest.json");
                 }
@@ -140,7 +140,7 @@ namespace MissionPlanner.ArduPilot
             {
                 try
                 {
-                    log.Info(url);
+                    log.Debug(url);
 
                     var client = new HttpClient();
 
@@ -169,7 +169,7 @@ namespace MissionPlanner.ArduPilot
                     list.AddRange(Manifest2.Firmware);
                     Manifest.Firmware = list.ToArray();
 
-                    log.Info(Manifest.Firmware?.Length);
+                    log.Debug(Manifest.Firmware?.Length);
                 }
                 catch (Exception ex)
                 {

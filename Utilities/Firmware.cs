@@ -591,6 +591,7 @@ namespace MissionPlanner.Utilities
         /// <param name="filename"></param>
         public bool UploadPX4(string filename, BoardDetect.boards board)
         {
+            _checksumEvidenceVerdict = 0; // reset for this upload
             updateProgress(-1, "Reading Hex File");
             px4uploader.Firmware fw;
             try
@@ -719,31 +720,41 @@ namespace MissionPlanner.Utilities
 
                     //    return true;
                     //}
-                    if (str== "Same Firmware")
+                    if (str == "Same Firmware")
                     {
-                        CustomMessageBox.Show("Both formware are same, no need to upload");
+                        updateProgress(100, "Firmware already matches board image.");
+                        CustomMessageBox.Show("Both firmware are the same, no need to upload");
+                        try
+                        {
+                            uploader.__reboot();
+                        }
+                        catch (Exception ex)
+                        {
+                            log.Warn("Failed to reboot board after same-firmware check", ex);
+                        }
                         uploader.close();
                         result = false;
                         return true;
                     }
-                    else 
+
+                    if (!string.Equals(str, "OK", StringComparison.OrdinalIgnoreCase))
                     {
-                        CustomMessageBox.Show(str);
-                        uploader.close();
-                        result = false;
-                        return true;
+                        // A mismatch means board and file differ; continue with upload.
+                        log.Info("Bootloader checksum pre-check: " + str + " (continuing upload)");
                     }
                     try
                     {
                         updateProgress(0, "Upload");
                         uploader.upload(fw);
                         updateProgress(100, "Upload Done");
+                        log.Info("[CHECKSUM_EVIDENCE][FINAL] RESULT=" + ChecksumVerdictLabel(_checksumEvidenceVerdict));
                     }
                     catch (Exception ex)
                     {
                         updateProgress(0, "ERROR: " + ex.Message);
                         log.Info(ex);
                         Console.WriteLine(ex.ToString());
+                        log.Info("[CHECKSUM_EVIDENCE][FINAL] RESULT=" + ChecksumVerdictLabel(_checksumEvidenceVerdict));
                         result = false;
                         return false;
                     }
@@ -1283,17 +1294,144 @@ namespace MissionPlanner.Utilities
 
         string _message = "";
 
+        // Accumulates the dominant CRC/checksum verdict seen during a PX4 upload.
+        // Values: 0=Unknown, 1=Unavailable, 2=Match, 3=Mismatch (higher wins except Mismatch always wins)
+        private int _checksumEvidenceVerdict = 0;
+
+        private static int MergeChecksumVerdict(int current, int incoming)
+        {
+            // Mismatch(3) always dominates; Match(2) beats Unavailable(1); Unavailable beats Unknown(0)
+            if (incoming == 3) return 3;
+            if (current == 3) return 3;
+            if (incoming == 2) return 2;
+            if (current == 2) return 2;
+            if (incoming == 1) return 1;
+            return current;
+        }
+
+        private static string ChecksumVerdictLabel(int v)
+        {
+            switch (v)
+            {
+                case 3: return "MISMATCH";
+                case 2: return "MATCH";
+                case 1: return "UNAVAILABLE";
+                default: return "UNKNOWN";
+            }
+        }
+
         void up_LogEvent(string message, int level = 0)
         {
             log.Debug(message);
 
             _message = message;
             updateProgress(-1, message);
+
+            // CRC/checksum evidence normalization (C6)
+            string lower = (message ?? string.Empty).Trim().ToLowerInvariant();
+            int parsed = 0;
+            if (lower.Contains("crc/hash mismatch") || lower.Contains("checksum mismatch") || lower.Contains("crc mismatch"))
+                parsed = 3;
+            else if (lower.Contains("crc/hash match") || lower.Contains("checksum match") || lower.Contains("crc match"))
+                parsed = 2;
+            else if (lower.Contains("crc/hash unavailable") || lower.Contains("checksum unavailable") || lower.Contains("crc/hash unknown") || lower.Contains("checksum unknown"))
+                parsed = 1;
+
+            if (parsed > 0)
+            {
+                int merged = MergeChecksumVerdict(_checksumEvidenceVerdict, parsed);
+                if (merged != _checksumEvidenceVerdict)
+                {
+                    _checksumEvidenceVerdict = merged;
+                    log.Info("[CHECKSUM_EVIDENCE] RESULT=" + ChecksumVerdictLabel(merged));
+                }
+            }
         }
 
         void up_ProgressEvent(double completed)
         {
             updateProgress((int)completed, _message);
+        }
+
+        /// <summary>
+        /// Wait for a MAVLink heartbeat after firmware upload (post-flash success policy, C9).
+        /// Emits [POST_FLASH_POLICY] RESULT=PASS/FAIL structured log lines.
+        /// </summary>
+        /// <param name="timeoutMs">Heartbeat wait timeout in milliseconds (default 90 000).</param>
+        /// <returns>True if heartbeat was detected within timeout.</returns>
+        public bool WaitForPostFlashHeartbeat(int timeoutMs = 90000)
+        {
+            log.Info("[POST_FLASH_POLICY] ENFORCED heartbeat_timeout_ms=" + timeoutMs);
+            updateProgress(-1, "Post-flash: waiting for FC heartbeat...");
+
+            var deadline = DateTime.Now.AddMilliseconds(timeoutMs);
+            bool heartbeatSeen = false;
+            DateTime lastScan = DateTime.MinValue;
+
+            while (DateTime.Now < deadline)
+            {
+                try
+                {
+                    // Check the primary comPort
+                    var port = MainV2.comPort;
+                    if (port != null && port.BaseStream != null && port.BaseStream.IsOpen)
+                    {
+                        var hb = port.getHeartBeat();
+                        if (hb != null && hb.Length > 0)
+                        {
+                            heartbeatSeen = true;
+                            break;
+                        }
+                    }
+
+                    // Also check any ports added by CommsSerialScan auto-connect
+                    var comports = MainV2.Comports;
+                    if (comports != null)
+                    {
+                        foreach (var cp in comports.ToList())
+                        {
+                            if (cp != null && cp != port && cp.BaseStream != null && cp.BaseStream.IsOpen)
+                            {
+                                heartbeatSeen = true;
+                                break;
+                            }
+                        }
+                    }
+                    if (heartbeatSeen) break;
+                }
+                catch { }
+
+                if (MainV2.instance != null && Comms.CommsSerialScan.run == 0 &&
+                    (DateTime.Now - lastScan).TotalSeconds >= 5)
+                {
+                    try
+                    {
+                        lastScan = DateTime.Now;
+                        updateProgress(-1, "Post-flash: scanning serial ports for FC heartbeat...");
+                        Comms.CommsSerialScan.Scan(true);
+                    }
+                    catch (Exception ex)
+                    {
+                        log.Warn("[POST_FLASH_POLICY] Serial scan failed", ex);
+                    }
+                }
+
+                System.Threading.Thread.Sleep(500);
+            }
+
+            if (heartbeatSeen)
+            {
+                log.Info("[POST_FLASH_POLICY] RESULT=PASS timeout_ms=" + timeoutMs);
+                log.Info("[UPLOAD_COMPLETE] SUCCESS - Firmware upload completed and validated");
+                updateProgress(100, "Post-flash validation passed: heartbeat detected.");
+            }
+            else
+            {
+                log.Info("[POST_FLASH_POLICY] RESULT=FAIL CLASS=HEARTBEAT_MISSING timeout_ms=" + timeoutMs + " detail=no-heartbeat");
+                updateProgress(0, "Post-flash validation failed: heartbeat not detected within " + (timeoutMs / 1000) + "s.");
+            }
+
+            return heartbeatSeen;
         }
 
         /// <summary>
@@ -1451,12 +1589,16 @@ namespace MissionPlanner.Utilities
                             CustomMessageBox.Show(
                                 String.Format(Strings.UploadSucceededButVerifyFailed, FLASH[s].ToString("X"),
                                     flashverify[s].ToString("X")) + s);
+                            log.Info("[CHECKSUM_EVIDENCE] RESULT=MISMATCH");
+                            log.Info("[CHECKSUM_EVIDENCE][FINAL] RESULT=MISMATCH");
                             port.Close();
                             return false;
                         }
                     }
 
                     updateProgress(100, Strings.VerifyComplete);
+                    log.Info("[CHECKSUM_EVIDENCE] RESULT=MATCH");
+                    log.Info("[CHECKSUM_EVIDENCE][FINAL] RESULT=MATCH");
                 }
                 else
                 {

@@ -334,11 +334,14 @@ namespace MissionPlanner.GCSViews.ConfigurationView
 
                     flashdone = true;
 
-                    fw.UploadFlash(deviceInfo.name, tempfile, BoardDetect.boards.pass);
-                    
+                    bool uploadOk = fw.UploadFlash(deviceInfo.name, tempfile, BoardDetect.boards.pass);
+
                     var uploadtime = (DateTime.Now - uploadstarttime).TotalMilliseconds;
 
                     Tracking.AddTiming("Firmware Upload", deviceInfo.board, uploadtime, deviceInfo.description);
+
+                    if (uploadOk)
+                        fw.WaitForPostFlashHeartbeat();
 
                     return;
 
@@ -499,7 +502,9 @@ namespace MissionPlanner.GCSViews.ConfigurationView
 
                     try
                     {
-                        fw.UploadFlash(MainV2.comPortName, fd.FileName, boardtype);
+                        bool customOk = fw.UploadFlash(MainV2.comPortName, fd.FileName, boardtype);
+                        if (customOk)
+                            fw.WaitForPostFlashHeartbeat();
                     }
                     catch (Exception ex)
                     {
