@@ -79,6 +79,15 @@ namespace MissionPlanner.Controls.BackstageView
             
         }
 
+        public void Reset()
+        {
+            _activePage = null;
+            _items.Clear();
+            pnlMenu.Controls.Clear();
+            ButtonTopPos = 0;
+            pnlPages.Controls.Clear();
+        }
+
         public void UpdateDisplay()
         {
             foreach (BackstageViewPage itemType in _items)

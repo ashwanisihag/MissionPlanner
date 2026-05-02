@@ -113,6 +113,16 @@ namespace MissionPlanner.GCSViews
         {
         }
 
+        private void ParamListChanged_Reload(object sender, EventArgs e)
+        {
+            if (!gotAllParams) return;
+            MainV2.comPort.ParamListChanged -= ParamListChanged_Reload;
+            if (InvokeRequired)
+                BeginInvoke((Action)(() => MainV2.instance.ReloadHWConfig()));
+            else
+                MainV2.instance.ReloadHWConfig();
+        }
+
         private void HardwareConfig_Load(object sender, EventArgs e)
         {
             ResourceManager rm = new ResourceManager(this.GetType());
@@ -120,7 +130,10 @@ namespace MissionPlanner.GCSViews
             if (!gotAllParams)
             {
                 if (MainV2.comPort.BaseStream.IsOpen)
+                {
                     AddBackstageViewPage(typeof(ConfigParamLoading), Strings.Loading);
+                    MainV2.comPort.ParamListChanged += ParamListChanged_Reload;
+                }
             }
 
             if (MainV2.DisplayConfiguration.displayInstallFirmware)
@@ -320,6 +333,8 @@ namespace MissionPlanner.GCSViews
 
         private void HardwareConfig_FormClosing(object sender, FormClosingEventArgs e)
         {
+            MainV2.comPort.ParamListChanged -= ParamListChanged_Reload;
+
             if (backstageView.SelectedPage != null)
                 lastpagename = backstageView.SelectedPage.LinkText;
 

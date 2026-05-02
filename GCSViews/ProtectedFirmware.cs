@@ -110,6 +110,7 @@ namespace MissionPlanner.GCSViews
             BuildUi();
             LoadPreferences();
             RefreshHmacKeyUi();
+            RoleBasedAccess.SessionChanged += RoleBasedAccess_SessionChanged;
 
             _logTimer = new System.Windows.Forms.Timer { Interval = 2000 };
             _logTimer.Tick += LogTimer_Tick;
@@ -117,6 +118,7 @@ namespace MissionPlanner.GCSViews
 
         public void Activate()
         {
+            ApplyRoleAccessUi();
             RefreshHmacKeyUi();
             _lastLogPos = 0; // re-read from tail
             _logTimer.Start();
@@ -128,6 +130,7 @@ namespace MissionPlanner.GCSViews
         {
             if (disposing)
             {
+                RoleBasedAccess.SessionChanged -= RoleBasedAccess_SessionChanged;
                 _logTimer?.Stop();
                 _logTimer?.Dispose();
             }
@@ -898,6 +901,9 @@ namespace MissionPlanner.GCSViews
 
         private void BtnFlashFirmware_Click(object sender, EventArgs e)
         {
+            if (!EnsureProtectedRole(AppUserRole.Admin, "flash firmware"))
+                return;
+
             if (Interlocked.CompareExchange(ref _flashFirmwareInProgress, 1, 0) != 0)
             {
                 AppendOutput("[FLASH] Ignored: flash already in progress.");
@@ -1092,6 +1098,9 @@ namespace MissionPlanner.GCSViews
 
         private void BtnFlashBootloader_Click(object sender, EventArgs e)
         {
+            if (!EnsureProtectedRole(AppUserRole.Admin, "flash bootloader"))
+                return;
+
             string blPath = txtBootloaderFile.Text.Trim();
             if (string.IsNullOrWhiteSpace(blPath) || !File.Exists(blPath))
             {
@@ -1146,6 +1155,9 @@ namespace MissionPlanner.GCSViews
 
         private void BtnExportAudit_Click(object sender, EventArgs e)
         {
+            if (!EnsureProtectedRole(AppUserRole.Operator, "export audit bundle"))
+                return;
+
             try
             {
                 Directory.CreateDirectory(_auditExportFolder);
@@ -1219,6 +1231,9 @@ namespace MissionPlanner.GCSViews
 
         private async void BtnProvisionRegistry_Click(object sender, EventArgs e)
         {
+            if (!EnsureProtectedRole(AppUserRole.Admin, "provision checksum registry"))
+                return;
+
             string fwPath = ResolveDefaultFirmwareForRegistryScripts();
             if (string.IsNullOrWhiteSpace(fwPath) || !File.Exists(fwPath))
             {
@@ -1773,6 +1788,9 @@ namespace MissionPlanner.GCSViews
 
         private async void BtnVerifyRegistry_Click(object sender, EventArgs e)
         {
+            if (!EnsureProtectedRole(AppUserRole.Operator, "verify checksum registry"))
+                return;
+
             string fwPath = ResolveDefaultFirmwareForRegistryScripts();
             if (string.IsNullOrWhiteSpace(fwPath) || !File.Exists(fwPath))
             {
@@ -1982,6 +2000,9 @@ namespace MissionPlanner.GCSViews
         private async Task TryAutoVerifyOnConnectAsync()
         {
             await Task.Delay(1500); // let link settle
+
+            if (!RoleBasedAccess.IsInRole(AppUserRole.Operator))
+                return;
 
             if (Interlocked.CompareExchange(ref _autoVerifyInProgress, 1, 0) != 0)
                 return;
@@ -2724,6 +2745,9 @@ namespace MissionPlanner.GCSViews
 
         private async Task ApGenerateKeysAsync()
         {
+            if (!EnsureProtectedRole(AppUserRole.Admin, "generate signing keys"))
+                return;
+
             string board  = txtApBoard.Text.Trim();
             string outDir = txtApKeyOutDir.Text.Trim();
 
@@ -2819,6 +2843,9 @@ namespace MissionPlanner.GCSViews
 
         private async Task ApBuildFwAndBlAsync()
         {
+            if (!EnsureProtectedRole(AppUserRole.Admin, "build firmware and bootloader"))
+                return;
+
             string board   = txtApBoard.Text.Trim();
             string repoPath = txtApRoot.Text.Trim();
             string outDir  = txtApKeyOutDir.Text.Trim();
@@ -3222,6 +3249,9 @@ namespace MissionPlanner.GCSViews
 
         private async Task ApBuildBootloaderAsync()
         {
+            if (!EnsureProtectedRole(AppUserRole.Admin, "build bootloader"))
+                return;
+
             string board   = txtApBoard.Text.Trim();
             string repoPath = txtApRoot.Text.Trim();
             string outDir  = txtApKeyOutDir.Text.Trim();
@@ -3356,6 +3386,9 @@ namespace MissionPlanner.GCSViews
 
         private async Task ApSignFirmwareAsync()
         {
+            if (!EnsureProtectedRole(AppUserRole.Admin, "sign firmware"))
+                return;
+
             string apjPath = txtApApjPath.Text.Trim();
             string keyPath = txtApPrivateKey.Text.Trim();
             string repoPath = txtApRoot.Text.Trim();
@@ -3480,6 +3513,9 @@ namespace MissionPlanner.GCSViews
 
         private void BtnImportCert_Click(object sender, EventArgs e)
         {
+            if (!EnsureProtectedRole(AppUserRole.Admin, "import certificate"))
+                return;
+
             using (var ofd = new OpenFileDialog
             {
                 Title = "Import Certificate",
@@ -3539,6 +3575,9 @@ namespace MissionPlanner.GCSViews
 
         private async Task SignWithCertificateAsync()
         {
+            if (!EnsureProtectedRole(AppUserRole.Admin, "certificate signing"))
+                return;
+
             string fwPath  = txtFwCert.Text.Trim();
             string sigPath = txtSigOut.Text.Trim();
 
@@ -3590,6 +3629,9 @@ namespace MissionPlanner.GCSViews
 
         private void BtnGenerateHmac_Click(object sender, EventArgs e)
         {
+            if (!EnsureProtectedRole(AppUserRole.Admin, "generate HMAC key"))
+                return;
+
             byte[] key = new byte[32];
             using (var rng = new RNGCryptoServiceProvider())
                 rng.GetBytes(key);
@@ -3616,6 +3658,9 @@ namespace MissionPlanner.GCSViews
 
         private void BtnExportHmac_Click(object sender, EventArgs e)
         {
+            if (!EnsureProtectedRole(AppUserRole.Admin, "export HMAC key"))
+                return;
+
             if (_currentHmacKey == null) return;
 
             using (var sfd = new SaveFileDialog
@@ -3668,6 +3713,9 @@ namespace MissionPlanner.GCSViews
 
         private async Task RunSigningTestsAsync()
         {
+            if (!EnsureProtectedRole(AppUserRole.Operator, "run signing tests"))
+                return;
+
             btnRunTests.Enabled = false;
             btnRunTests.Text    = "Running...";
             txtTestReport.Text  = "Running compliance tests, please wait...";
@@ -4094,6 +4142,71 @@ print('Wrote %s' % args.apj_file)
         private void ShowErr(string msg)
         {
             MessageBox.Show(msg, "Protected Firmware", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+        }
+
+        private bool EnsureProtectedRole(AppUserRole minimumRole, string action)
+        {
+            bool allowed = RoleBasedAccess.EnsureRole(minimumRole, action);
+            if (!allowed)
+            {
+                log.Warn("[RBAC] denied action='" + action + "' required='" + minimumRole + "' user='" + (RoleBasedAccess.CurrentUsername ?? "(none)") + "' role='" + RoleBasedAccess.CurrentRole + "'");
+            }
+
+            return allowed;
+        }
+
+        private void RoleBasedAccess_SessionChanged(object sender, EventArgs e)
+        {
+            if (IsDisposed)
+                return;
+
+            if (InvokeRequired)
+            {
+                BeginInvoke((Action)ApplyRoleAccessUi);
+                return;
+            }
+
+            ApplyRoleAccessUi();
+        }
+
+        private void ApplyRoleAccessUi()
+        {
+            bool canOperate = RoleBasedAccess.IsInRole(AppUserRole.Operator);
+            bool canAdmin = RoleBasedAccess.IsInRole(AppUserRole.Admin);
+
+            if (btnFlashFirmware != null) btnFlashFirmware.Enabled = canAdmin;
+            if (btnFlashBootloader != null) btnFlashBootloader.Enabled = canAdmin;
+            if (btnProvisionRegistry != null) btnProvisionRegistry.Enabled = canAdmin;
+            if (btnVerifyRegistry != null) btnVerifyRegistry.Enabled = canOperate;
+            if (btnExportAudit != null) btnExportAudit.Enabled = canOperate;
+            if (btnApGenerateKeys != null) btnApGenerateKeys.Enabled = canAdmin;
+            if (btnApBuildFwBl != null) btnApBuildFwBl.Enabled = canAdmin;
+            if (btnApBuildBootloader != null) btnApBuildBootloader.Enabled = canAdmin;
+            if (btnApSignFw != null) btnApSignFw.Enabled = canAdmin;
+            if (btnImportCert != null) btnImportCert.Enabled = canAdmin;
+            if (btnSignWithCert != null) btnSignWithCert.Enabled = canAdmin && _loadedCert != null && _loadedCert.HasPrivateKey;
+            if (btnGenerateHmac != null) btnGenerateHmac.Enabled = canAdmin;
+            if (btnExportHmac != null) btnExportHmac.Enabled = canAdmin && _currentHmacKey != null;
+            if (btnRunTests != null) btnRunTests.Enabled = canOperate;
+
+            if (lblWorkflowStatus != null)
+            {
+                if (canAdmin)
+                {
+                    lblWorkflowStatus.Text = "Workflow: Admin access";
+                    lblWorkflowStatus.ForeColor = Color.LimeGreen;
+                }
+                else if (canOperate)
+                {
+                    lblWorkflowStatus.Text = "Workflow: Operator access (read/verify)";
+                    lblWorkflowStatus.ForeColor = Color.Goldenrod;
+                }
+                else
+                {
+                    lblWorkflowStatus.Text = "Workflow: Login required (Operator/Admin)";
+                    lblWorkflowStatus.ForeColor = Color.Red;
+                }
+            }
         }
 
         // ================================================================

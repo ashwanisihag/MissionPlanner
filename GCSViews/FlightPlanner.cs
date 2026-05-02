@@ -1,4 +1,4 @@
-﻿using DotSpatial.Data;
+using DotSpatial.Data;
 using DotSpatial.Projections;
 using GeoUtility.GeoSystem;
 using GeoUtility.GeoSystem.Base;
@@ -2658,19 +2658,8 @@ namespace MissionPlanner.GCSViews
                 deleteWPToolStripMenuItem.Enabled = true;
             }
 
-            if (MainV2.comPort != null && MainV2.comPort.MAV != null)
-            {
-                if ((MainV2.comPort.MAV.cs.capabilities & (int) MAVLink.MAV_PROTOCOL_CAPABILITY.MISSION_FENCE) > 0)
-                {
-                    geoFenceToolStripMenuItem.Visible = false;
-                    rallyPointsToolStripMenuItem.Visible = false;
-                }
-                else
-                {
-                    geoFenceToolStripMenuItem.Visible = true;
-                    rallyPointsToolStripMenuItem.Visible = true;
-                }
-            }
+            geoFenceToolStripMenuItem.Visible = MainV2.DisplayConfiguration.displayGeoFenceMenu;
+            rallyPointsToolStripMenuItem.Visible = MainV2.DisplayConfiguration.displayRallyPointsMenu;
 
             isMouseClickOffMenu = false; // Just incase
         }

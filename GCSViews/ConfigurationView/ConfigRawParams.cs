@@ -39,6 +39,9 @@ namespace MissionPlanner.GCSViews.ConfigurationView
         // Used by Param Tree to filter by prefix
         private string filterPrefix = "";
 
+        // When true the tree panel is always hidden (Full Parameter List mode)
+        public bool HideTree { get; set; } = false;
+
         public ConfigRawParams()
         {
             InitializeComponent();
@@ -79,7 +82,8 @@ namespace MissionPlanner.GCSViews.ConfigurationView
                 }
             }
             splitContainer1.SplitterDistance = Settings.Instance.GetInt32("rawparam_splitterdistance", 180);
-            splitContainer1.Panel1Collapsed = Settings.Instance.GetBoolean("rawparam_panel1collapsed", false);
+            splitContainer1.Panel1Collapsed = HideTree || Settings.Instance.GetBoolean("rawparam_panel1collapsed", false);
+            but_collapse.Visible = !HideTree;
             but_collapse.Text = splitContainer1.Panel1Collapsed ? ">" : "<";
 
             processToScreen();

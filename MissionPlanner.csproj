@@ -5,6 +5,8 @@
     <Configuration Condition=" '$(Configuration)' == '' ">Debug</Configuration>
     <Platform Condition=" '$(Platform)' == '' ">AnyCPU</Platform>
     <TargetFrameworkVersion>v4.7.2</TargetFrameworkVersion>
+    <RuntimeIdentifier>win</RuntimeIdentifier>
+    <RuntimeIdentifiers>win</RuntimeIdentifiers>
     <ProjectGuid>{A2E22272-95FE-47B6-B050-9AE7E2055BF5}</ProjectGuid>
     <ApplicationIcon>mpdesktop.ico</ApplicationIcon>
     <OutputType>Exe</OutputType>
@@ -1114,6 +1116,9 @@
     <Compile Include="Controls\AuthKeys.cs">
       <SubType>Form</SubType>
     </Compile>
+    <Compile Include="Controls\LoginDialog.cs">
+      <SubType>Form</SubType>
+    </Compile>
     <Compile Include="Controls\ComplianceIndicator.cs">
       <SubType>UserControl</SubType>
     </Compile>
@@ -1406,6 +1411,9 @@
     <Compile Include="GCSViews\ProtectedFirmware.cs">
       <SubType>UserControl</SubType>
     </Compile>
+    <Compile Include="GCSViews\UserManagement.cs">
+      <SubType>UserControl</SubType>
+    </Compile>
     <Compile Include="GCSViews\SoftwareConfig.cs">
       <SubType>UserControl</SubType>
     </Compile>
@@ -1532,6 +1540,7 @@
     <Compile Include="GCSViews\ConfigurationView\ConfigRawParams.cs">
       <SubType>UserControl</SubType>
     </Compile>
+    <Compile Include="GCSViews\ConfigurationView\ConfigRawParamsList.cs" />
     <Compile Include="GCSViews\ConfigurationView\ConfigSimplePids.cs">
       <SubType>UserControl</SubType>
     </Compile>
@@ -1646,6 +1655,7 @@
     <Compile Include="Utilities\LogAnalyzer.cs" />
     <Compile Include="Utilities\POI.cs" />
     <Compile Include="Utilities\ThemeManager.cs" />
+    <Compile Include="Utilities\RoleBasedAccess.cs" />
     <Compile Include="Utilities\GStreamerUI.cs" />
     <Compile Include="Utilities\Update.cs" />
     <Compile Include="Utilities\Win32DeviceMgnt.cs" />

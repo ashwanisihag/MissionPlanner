@@ -157,13 +157,15 @@ namespace MissionPlanner.GCSViews
                     }
                 }
 
-                if (MainV2.DisplayConfiguration.displayFullParamList)//Ashwani Sihag
+                if (MainV2.DisplayConfiguration.displayFullParamList)
                 {
                     if (!MainV2.comPort.BaseStream.IsOpen || gotAllParams)
-                        //if (boolSecure == false)
-                        {
-                           //AddBackstageViewPage(typeof(ConfigRawParams), Strings.FullParameterList, null, false);
-                        }
+                        AddBackstageViewPage(typeof(ConfigRawParamsList), Strings.FullParameterList, null, false);
+                }
+                if (MainV2.DisplayConfiguration.displayFullParamTree)
+                {
+                    if (!MainV2.comPort.BaseStream.IsOpen || gotAllParams)
+                        AddBackstageViewPage(typeof(ConfigRawParams), Strings.FullParameterTree, null, false);
                 }
                 if (MainV2.comPort.BaseStream.IsOpen)
                 {

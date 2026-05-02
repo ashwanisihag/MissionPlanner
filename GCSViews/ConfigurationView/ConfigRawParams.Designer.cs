@@ -373,7 +373,7 @@ namespace MissionPlanner.GCSViews.ConfigurationView
         private System.Windows.Forms.CheckBox chk_modified;
         private MyButton BUT_refreshTable;
         private System.Windows.Forms.CheckBox chk_none_default;
-        private System.Windows.Forms.SplitContainer splitContainer1;
+        protected System.Windows.Forms.SplitContainer splitContainer1;
         private System.Windows.Forms.TableLayoutPanel tableLayoutPanel1;
         private System.Windows.Forms.TreeView treeView1;
         private MyButton but_collapse;

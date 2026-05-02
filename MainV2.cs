@@ -1,4 +1,4 @@
-﻿#if !LIB
+#if !LIB
 extern alias Drawing;
 #endif
 
@@ -550,6 +550,8 @@ namespace MissionPlanner
         GCSViews.SITL Simulation;
         private ToolStripButton MenuSecurity;
         private ToolStripButton MenuProtectedFirmware;
+        private ToolStripButton MenuUserSession;
+        private ToolStripButton MenuUserManagement;
 
         private Form connectionStatsForm;
         private ConnectionStats _connectionStats;
@@ -568,6 +570,8 @@ namespace MissionPlanner
             MenuSimulation.Visible = DisplayConfiguration.displaySimulation;
             MenuHelp.Visible = DisplayConfiguration.displayHelp;
             MissionPlanner.Controls.BackstageView.BackstageView.Advanced = DisplayConfiguration.isAdvancedMode;
+            MenuInitConfig.Visible = DisplayConfiguration.displayInitialSetup;
+            MenuConfigTune.Visible = DisplayConfiguration.displayConfigTuning;
 
             // force autohide on
             if (DisplayConfiguration.autoHideMenuForce)
@@ -771,6 +775,10 @@ namespace MissionPlanner
 
             InitializeSecurityMenuButton();
             InitializeProtectedFirmwareMenuButton();
+            InitializeUserSessionMenuButton();
+            InitializeUserManagementMenuButton();
+            RoleBasedAccess.SessionChanged += RoleBasedAccess_SessionChanged;
+            UpdateUserMenuState();
 
             //Init Theme table and load BurntKermit as a default
             ThemeManager.thmColor = new ThemeColorTable(); //Init colortable
@@ -980,7 +988,7 @@ namespace MissionPlanner
                 try
                 {
                     DisplayConfiguration = Settings.Instance.GetDisplayView("displayview");
-                    //Force new view in case of saved view in config.xml 
+                    //Force new view in case of saved view in config.xml
                     DisplayConfiguration.displayAdvancedParams = false;
                     DisplayConfiguration.displayStandardParams = false;
                     DisplayConfiguration.displayFullParamList = true;
@@ -1245,6 +1253,10 @@ namespace MissionPlanner
                 MenuSecurity.Image = displayicons.config_tuning;
             if (MenuProtectedFirmware != null)
                 MenuProtectedFirmware.Image = displayicons.config_tuning;
+            if (MenuUserSession != null)
+                MenuUserSession.Image = displayicons.connect;
+            if (MenuUserManagement != null)
+                MenuUserManagement.Image = displayicons.config_tuning;
             MenuConnect.Image = displayicons.connect;
             MenuHelp.Image = displayicons.help;
 
@@ -1258,6 +1270,10 @@ namespace MissionPlanner
                 MenuSecurity.ForeColor = ThemeManager.TextColor;
             if (MenuProtectedFirmware != null)
                 MenuProtectedFirmware.ForeColor = ThemeManager.TextColor;
+            if (MenuUserSession != null)
+                MenuUserSession.ForeColor = ThemeManager.TextColor;
+            if (MenuUserManagement != null)
+                MenuUserManagement.ForeColor = ThemeManager.TextColor;
             MenuConnect.ForeColor = ThemeManager.TextColor;
             MenuHelp.ForeColor = ThemeManager.TextColor;
         }
@@ -1294,6 +1310,40 @@ namespace MissionPlanner
                 MainMenu.Items.Add(MenuProtectedFirmware);
             else
                 MainMenu.Items.Insert(insertIndex + 1, MenuProtectedFirmware);
+        }
+
+        private void InitializeUserSessionMenuButton()
+        {
+            MenuUserSession = new ToolStripButton();
+            MenuUserSession.ForeColor = SystemColors.ControlLight;
+            MenuUserSession.Margin = new Padding(0);
+            MenuUserSession.Name = "MenuUserSession";
+            MenuUserSession.Text = "LOGIN";
+            MenuUserSession.TextImageRelation = TextImageRelation.ImageAboveText;
+            MenuUserSession.Click += MenuUserSession_Click;
+
+            int insertIndex = MainMenu.Items.IndexOf(MenuProtectedFirmware);
+            if (insertIndex < 0)
+                MainMenu.Items.Add(MenuUserSession);
+            else
+                MainMenu.Items.Insert(insertIndex + 1, MenuUserSession);
+        }
+
+        private void InitializeUserManagementMenuButton()
+        {
+            MenuUserManagement = new ToolStripButton();
+            MenuUserManagement.ForeColor = SystemColors.ControlLight;
+            MenuUserManagement.Margin = new Padding(0);
+            MenuUserManagement.Name = "MenuUserManagement";
+            MenuUserManagement.Text = "USERS";
+            MenuUserManagement.TextImageRelation = TextImageRelation.ImageAboveText;
+            MenuUserManagement.Click += MenuUserManagement_Click;
+
+            int insertIndex = MainMenu.Items.IndexOf(MenuUserSession);
+            if (insertIndex < 0)
+                MainMenu.Items.Add(MenuUserManagement);
+            else
+                MainMenu.Items.Insert(insertIndex + 1, MenuUserManagement);
         }
 
         void adsb_UpdatePlanePosition(object sender, MissionPlanner.Utilities.adsb.PointLatLngAltHdg adsb)
@@ -1462,6 +1512,12 @@ namespace MissionPlanner
             }
         }
 
+        public void ReloadHWConfig()
+        {
+            if (MyView.current != null && MyView.current.Name == "HWConfig")
+                MyView.ShowScreen("HWConfig");
+        }
+
         private void MenuSimulation_Click(object sender, EventArgs e)
         {
             MyView.ShowScreen("Simulation");
@@ -1496,14 +1552,116 @@ namespace MissionPlanner
 
         private void MenuSecurity_Click(object sender, EventArgs e)
         {
-            new AuthKeys().Show();
+            if (!RoleBasedAccess.EnsureRole(AppUserRole.Operator, "Security"))
+                return;
+
+            MyView.ShowScreen("Security");
             SaveConfig();
         }
 
         private void MenuProtectedFirmware_Click(object sender, EventArgs e)
         {
+            if (!RoleBasedAccess.EnsureRole(AppUserRole.Admin, "Protected Firmware"))
+                return;
+
             MyView.ShowScreen("ProtectedFirmware");
             SaveConfig();
+        }
+
+        private void MenuUserSession_Click(object sender, EventArgs e)
+        {
+            if (RoleBasedAccess.IsAuthenticated)
+            {
+                if (MessageBox.Show("Logout current user '" + RoleBasedAccess.CurrentUsername + "'?", "Logout", MessageBoxButtons.YesNo, MessageBoxIcon.Question) == DialogResult.Yes)
+                {
+                    RoleBasedAccess.Logout();
+                    CustomMessageBox.Show("Logged out.", "User session");
+                }
+
+                return;
+            }
+
+            using (var login = new LoginDialog())
+            {
+                if (login.ShowDialog(this) != DialogResult.OK)
+                    return;
+
+                if (!RoleBasedAccess.TryLogin(login.Username, login.Password, out var message))
+                {
+                    CustomMessageBox.Show(message, "Login failed");
+                    return;
+                }
+
+                CustomMessageBox.Show("Login successful.\nUser: " + RoleBasedAccess.CurrentUsername + "\nRole: " + RoleBasedAccess.CurrentRole, "User session");
+            }
+        }
+
+        private void MenuUserManagement_Click(object sender, EventArgs e)
+        {
+            if (!RoleBasedAccess.EnsureRole(AppUserRole.Admin, "User Management"))
+                return;
+
+            MyView.ShowScreen("UserManagement");
+        }
+
+        private void RoleBasedAccess_SessionChanged(object sender, EventArgs e)
+        {
+            if (IsDisposed)
+                return;
+
+            if (InvokeRequired)
+            {
+                BeginInvoke((Action)UpdateUserMenuState);
+                return;
+            }
+
+            UpdateUserMenuState();
+        }
+
+                private void UpdateUserMenuState()
+        {
+            if (MenuUserSession != null)
+            {
+                MenuUserSession.Text = RoleBasedAccess.IsAuthenticated
+                    ? (RoleBasedAccess.CurrentUsername + " (" + RoleBasedAccess.CurrentRole + ")")
+                    : "LOGIN";
+            }
+
+            if (MenuUserManagement != null)
+            {
+                MenuUserManagement.Enabled = RoleBasedAccess.IsInRole(AppUserRole.Admin);
+            }
+
+            // Apply role-based visibility to the current display configuration
+            RoleDisplayPolicy.Apply(DisplayConfiguration, RoleBasedAccess.CurrentRole);
+            // Persist and broadcast the updated layout
+            DisplayConfiguration = DisplayConfiguration;
+
+            // Enforce critical role-based tab visibility immediately in case layout updates are deferred.
+            if (FlightData != null && FlightData.tabControlactions != null)
+            {
+                var tabs = FlightData.tabControlactions;
+
+                if (!DisplayConfiguration.displayTelemetryTab && tabs.TabPages.Contains(FlightData.tabTLogs))
+                    tabs.TabPages.Remove(FlightData.tabTLogs);
+                else if (DisplayConfiguration.displayTelemetryTab && !tabs.TabPages.Contains(FlightData.tabTLogs))
+                    tabs.TabPages.Add(FlightData.tabTLogs);
+
+                if (!DisplayConfiguration.displayDataflashTab && tabs.TabPages.Contains(FlightData.tablogbrowse))
+                    tabs.TabPages.Remove(FlightData.tablogbrowse);
+                else if (DisplayConfiguration.displayDataflashTab && !tabs.TabPages.Contains(FlightData.tablogbrowse))
+                    tabs.TabPages.Add(FlightData.tablogbrowse);
+            }
+
+            // If initial-setup or config-tuning is now hidden, navigate away from those screens
+            if (MyView != null && MyView.current != null)
+            {
+                string cur = MyView.current.Name;
+                bool onSetup = cur == "HWConfig" && !DisplayConfiguration.displayInitialSetup;
+                bool onConfig = cur == "SWConfig" && !DisplayConfiguration.displayConfigTuning;
+                if (onSetup || onConfig)
+                    MyView.ShowScreen("FlightData");
+            }
         }
 
         private void MenuTerminal_Click(object sender, EventArgs e)
@@ -3328,11 +3486,17 @@ namespace MissionPlanner
 
             MyView.AddScreen(new MainSwitcher.Screen("FlightData", FlightData, true));
             MyView.AddScreen(new MainSwitcher.Screen("FlightPlanner", FlightPlanner, true));
-            MyView.AddScreen(new MainSwitcher.Screen("HWConfig", typeof(GCSViews.InitialSetup), true));
-            MyView.AddScreen(new MainSwitcher.Screen("SWConfig", typeof(GCSViews.SoftwareConfig), true));
+            MyView.AddScreen(new MainSwitcher.Screen("HWConfig", typeof(GCSViews.InitialSetup), false));
+            MyView.AddScreen(new MainSwitcher.Screen("SWConfig", typeof(GCSViews.SoftwareConfig), false));
+            MyView.AddScreen(new MainSwitcher.Screen("Security", typeof(GCSViews.Security), true));
             MyView.AddScreen(new MainSwitcher.Screen("ProtectedFirmware", typeof(GCSViews.ProtectedFirmware), true));
+            MyView.AddScreen(new MainSwitcher.Screen("UserManagement", typeof(GCSViews.UserManagement), true));
             MyView.AddScreen(new MainSwitcher.Screen("Simulation", Simulation, true));
             MyView.AddScreen(new MainSwitcher.Screen("Help", typeof(GCSViews.Help), true));
+
+            // Apply role visibility before the first screen is displayed
+            RoleDisplayPolicy.Apply(DisplayConfiguration, RoleBasedAccess.CurrentRole);
+            DisplayConfiguration = DisplayConfiguration;
 
             try
             {

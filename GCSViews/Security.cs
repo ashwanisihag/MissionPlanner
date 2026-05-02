@@ -285,8 +285,19 @@ namespace MissionPlanner.GCSViews
 
         private MAVState CurrentMav => MainV2.comPort?.MAV;
 
+        private bool CanAccessPage => RoleBasedAccess.IsInRole(AppUserRole.Operator);
+
+        private bool CanManageSecurity => RoleBasedAccess.IsInRole(AppUserRole.Admin);
+
         private void RunBusy(Action action)
         {
+            if (!CanAccessPage)
+            {
+                SetStatus("Operator role is required for this page.", true);
+                SetUiEnabled(true);
+                return;
+            }
+
             if (_busy)
                 return;
 
@@ -311,25 +322,30 @@ namespace MissionPlanner.GCSViews
         {
             var mav = CurrentMav;
             bool linkReady = mav != null && MainV2.comPort.BaseStream != null && MainV2.comPort.BaseStream.IsOpen;
+            bool canAccess = CanAccessPage;
+            bool canManage = CanManageSecurity;
 
-            _chkSignTx.Enabled = enabled;
-            _chkRequireSignedRx.Enabled = enabled;
-            _numLinkId.Enabled = enabled;
-            _txtKey.Enabled = enabled;
-            _btnToggleKey.Enabled = enabled;
-            _btnGenerateHex.Enabled = enabled;
-            _btnGenerateBase64.Enabled = enabled;
-            _btnCopyKey.Enabled = enabled;
-            _btnApplyLocal.Enabled = enabled && mav != null;
-            _btnPushKey.Enabled = enabled && linkReady && mav != null;
-            _btnApplyAndPush.Enabled = enabled && linkReady && mav != null;
-            _btnRemoveSecurity.Enabled = enabled && linkReady && mav != null;
-            _btnProbe.Enabled = enabled && linkReady && mav != null;
-            _btnRefresh.Enabled = enabled;
+            _chkSignTx.Enabled = enabled && canManage;
+            _chkRequireSignedRx.Enabled = enabled && canManage;
+            _numLinkId.Enabled = enabled && canManage;
+            _txtKey.Enabled = enabled && canManage;
+            _btnToggleKey.Enabled = enabled && canManage;
+            _btnGenerateHex.Enabled = enabled && canManage;
+            _btnGenerateBase64.Enabled = enabled && canManage;
+            _btnCopyKey.Enabled = enabled && canManage;
+            _btnApplyLocal.Enabled = enabled && canManage && mav != null;
+            _btnPushKey.Enabled = enabled && canManage && linkReady && mav != null;
+            _btnApplyAndPush.Enabled = enabled && canManage && linkReady && mav != null;
+            _btnRemoveSecurity.Enabled = enabled && canManage && linkReady && mav != null;
+            _btnProbe.Enabled = enabled && canAccess && linkReady && mav != null;
+            _btnRefresh.Enabled = enabled && canAccess;
         }
 
         private void ApplyLocal()
         {
+            if (!RoleBasedAccess.EnsureRole(AppUserRole.Admin, "apply security settings"))
+                return;
+
             var mav = CurrentMav;
             if (mav == null)
             {
@@ -397,6 +413,9 @@ namespace MissionPlanner.GCSViews
 
         private void PushKey()
         {
+            if (!RoleBasedAccess.EnsureRole(AppUserRole.Admin, "push signing key"))
+                return;
+
             var mav = CurrentMav;
             if (mav == null)
             {
@@ -444,6 +463,9 @@ namespace MissionPlanner.GCSViews
 
         private void RemoveSecurity()
         {
+            if (!RoleBasedAccess.EnsureRole(AppUserRole.Admin, "remove security"))
+                return;
+
             var mav = CurrentMav;
             if (mav == null)
             {
@@ -473,6 +495,9 @@ namespace MissionPlanner.GCSViews
 
         private void Probe()
         {
+            if (!RoleBasedAccess.EnsureRole(AppUserRole.Operator, "probe security link"))
+                return;
+
             var mav = CurrentMav;
             if (mav == null)
             {
@@ -523,6 +548,15 @@ namespace MissionPlanner.GCSViews
 
         private void UpdateStatusSnapshot()
         {
+            if (!CanAccessPage)
+            {
+                _lblTarget.Text = "Target: access restricted";
+                _lblRuntime.Text = "Runtime: login as Operator/Admin to use this page";
+                _lblRuntime.ForeColor = Color.DarkRed;
+                SetUiEnabled(true);
+                return;
+            }
+
             var mav = CurrentMav;
             if (mav == null)
             {
