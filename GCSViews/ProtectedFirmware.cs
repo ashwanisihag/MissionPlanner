@@ -33,13 +33,12 @@ namespace MissionPlanner.GCSViews
         private ComplianceIndicator _complianceIndicator;
         private Label  lblExportPath;
         private Button btnExportAudit, btnOpenExportFolder;
-        private TextBox txtFirmwareFile, txtBootloaderFile, txtSha256, txtOutput, txtDiag;
+        private TextBox txtFirmwareFile, txtBootloaderFile, txtSha256;
         private Label lblApjStatus, lblHashCheck, lblWorkflowStatus;
         private Button btnBrowseFirmware, btnFlashFirmware;
         private Button btnBrowseBootloader, btnFlashBootloader;
-        private Button btnProvisionRegistry, btnVerifyRegistry, btnDiagRefresh;
+        private Button btnProvisionRegistry, btnVerifyRegistry;
         private ProgressBar progressBar;
-        private Label lblProgressStatus;
 
         // ── Middle panel — signing tabs ──────────────────────────────────
         private TabControl tabsSigning;
@@ -50,7 +49,7 @@ namespace MissionPlanner.GCSViews
         private Button btnApBuildBootloader, btnApVerifyBootloader;
         private Button btnApSignFw, btnApVerifyApj;
         private TextBox txtApRoot, txtApBoard, txtApKeyOutDir;
-        private TextBox txtApBootloaderPath, txtApApjPath, txtApPrivateKey, txtApOutput;
+        private TextBox txtApBootloaderPath, txtApApjPath, txtApPrivateKey;
         private Button btnBrowseKeyOut, btnBrowseApBootloader, btnBrowseApj, btnBrowsePrivKey;
 
         // RSA Certificate
@@ -71,16 +70,17 @@ namespace MissionPlanner.GCSViews
         private TextBox txtTestReport;
         private Button  btnRunTests;
 
-        // ── Right panel — live log ────────────────────────────────────────
-        private TextBox txtLiveLog, txtLogFind;
-        private Button  btnLogFind, btnLogClear;
-        private System.Windows.Forms.Timer _logTimer;
-        private long    _lastLogPos;
+        // ── Right panel ────────────────────────────────────────────────
+        private TextBox txtCommonLog;
+
         private string  _logFilePath;
 
         // ── State ────────────────────────────────────────────────────────
         private string  _auditExportFolder;
         private string  _lastFirmwareSha256 = string.Empty;
+        private string  _lastRegistryCodeHash = string.Empty;
+        private string  _lastRegistryDataHash = string.Empty;
+        private string  _lastPostStatusSummary = "FC POST status: unknown";
         private int     _flashFirmwareInProgress;
         private int     _flashStepCounter;
         private const string AppSettingApWslRepo   = "ProtFwArduPilotWslRepoPath";
@@ -111,17 +111,12 @@ namespace MissionPlanner.GCSViews
             LoadPreferences();
             RefreshHmacKeyUi();
             RoleBasedAccess.SessionChanged += RoleBasedAccess_SessionChanged;
-
-            _logTimer = new System.Windows.Forms.Timer { Interval = 2000 };
-            _logTimer.Tick += LogTimer_Tick;
         }
 
         public void Activate()
         {
             ApplyRoleAccessUi();
             RefreshHmacKeyUi();
-            _lastLogPos = 0; // re-read from tail
-            _logTimer.Start();
             Task.Run(() => RunDiagnostics());
             _ = TryAutoVerifyOnConnectAsync();
         }
@@ -131,8 +126,6 @@ namespace MissionPlanner.GCSViews
             if (disposing)
             {
                 RoleBasedAccess.SessionChanged -= RoleBasedAccess_SessionChanged;
-                _logTimer?.Stop();
-                _logTimer?.Dispose();
             }
             base.Dispose(disposing);
         }
@@ -171,20 +164,20 @@ namespace MissionPlanner.GCSViews
                 CellBorderStyle = TableLayoutPanelCellBorderStyle.Single
             };
 
-            // Column 0: 25% — firmware/bootloader controls
-            table.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 25f));
+            // Column 0: 30% — firmware/bootloader controls
+            table.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 30f));
             var leftPanel = new Panel { Dock = DockStyle.Fill, AutoScroll = true, Padding = new Padding(6) };
             BuildLeftPanel(leftPanel);
             table.Controls.Add(leftPanel, 0, 0);
 
-            // Column 1: 40% — signing tabs
-            table.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 40f));
+            // Column 1: 37% — signing tabs
+            table.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 37f));
             var middlePanel = new Panel { Dock = DockStyle.Fill, Padding = new Padding(4) };
             BuildMiddlePanel(middlePanel);
             table.Controls.Add(middlePanel, 1, 0);
 
-            // Column 2: 35% — live log
-            table.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 35f));
+            // Column 2: 33% — common status log
+            table.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 33f));
             var rightPanel = new Panel { Dock = DockStyle.Fill, Padding = new Padding(4) };
             BuildRightPanel(rightPanel);
             table.Controls.Add(rightPanel, 2, 0);
@@ -221,12 +214,13 @@ namespace MissionPlanner.GCSViews
             scroll.Controls.Add(_complianceIndicator);
             y += 74;
 
-            // Export row
-            btnExportAudit = MakeButton("Export Signed Audit", new Point(0, y), new Size(162, 28));
+            // Export row — split evenly
+            int halfW = (w - 4) / 2;
+            btnExportAudit = MakeButton("Export Signed Audit", new Point(0, y), new Size(halfW, 28));
             btnExportAudit.Click += BtnExportAudit_Click;
             scroll.Controls.Add(btnExportAudit);
 
-            btnOpenExportFolder = MakeButton("Open Export Folder", new Point(170, y), new Size(w - 172, 28));
+            btnOpenExportFolder = MakeButton("Open Folder", new Point(halfW + 4, y), new Size(w - halfW - 4, 28));
             btnOpenExportFolder.Click += (s, e) =>
             {
                 try
@@ -326,52 +320,15 @@ namespace MissionPlanner.GCSViews
 
             AddSeparator(scroll, ref y);
 
-            // ── Output log ─────────────────────────────────────────────
-            progressBar = new ProgressBar { Location = new Point(0, y), Width = w, Height = 16 };
+            progressBar = new ProgressBar
+            {
+                Location = new Point(0, y),
+                Width = w,
+                Height = 16,
+                Value = 0,
+                Style = ProgressBarStyle.Blocks
+            };
             scroll.Controls.Add(progressBar);
-            y += 22;
-
-            lblProgressStatus = MakeLabel("Ready", new Point(0, y), w);
-            lblProgressStatus.ForeColor = Color.Gray;
-            scroll.Controls.Add(lblProgressStatus);
-            y += 22;
-
-            txtOutput = new TextBox
-            {
-                Location = new Point(0, y),
-                Size = new Size(w, 160),
-                Multiline = true,
-                ReadOnly = true,
-                ScrollBars = ScrollBars.Vertical,
-                BackColor = Color.FromArgb(15, 15, 15),
-                ForeColor = Color.LimeGreen,
-                Font = new Font("Consolas", 8.5f),
-                BorderStyle = BorderStyle.FixedSingle
-            };
-            scroll.Controls.Add(txtOutput);
-            y += 166;
-
-            AddSeparator(scroll, ref y);
-
-            // ── Diagnostics ────────────────────────────────────────────
-            var diagRow = new Label { Text = "Diagnostics:", AutoSize = true, Location = new Point(0, y), Font = new Font(Font.FontFamily, 9f, FontStyle.Bold) };
-            scroll.Controls.Add(diagRow);
-
-            btnDiagRefresh = MakeButton("Refresh", new Point(110, y - 2), new Size(80, 22));
-            btnDiagRefresh.Click += (s, e) => Task.Run(() => RunDiagnostics());
-            scroll.Controls.Add(btnDiagRefresh);
-            y += 26;
-
-            txtDiag = new TextBox
-            {
-                Location = new Point(0, y),
-                Size = new Size(w, 90),
-                Multiline = true,
-                ReadOnly = true,
-                ScrollBars = ScrollBars.Vertical,
-                Font = new Font("Consolas", 8f)
-            };
-            scroll.Controls.Add(txtDiag);
 
             // Stretch all controls when panel resizes
             scroll.Resize += (s2, e2) =>
@@ -380,15 +337,16 @@ namespace MissionPlanner.GCSViews
                 if (cw < 80) return;
                 int bw = 86;
                 int tw = cw - bw - 4;
+                int hw = (cw - 4) / 2;
                 foreach (Control c in scroll.Controls)
                 {
                     if (c is Label l && !l.AutoSize) l.Width = cw;
                     else if (c is ProgressBar) c.Width = cw;
                 }
                 if (_complianceIndicator != null) _complianceIndicator.Width = cw;
+                if (btnExportAudit != null) btnExportAudit.Width = hw;
+                if (btnOpenExportFolder != null) { btnOpenExportFolder.Left = hw + 4; btnOpenExportFolder.Width = cw - hw - 4; }
                 txtSha256.Width = cw;
-                txtOutput.Width = cw;
-                txtDiag.Width = cw;
                 txtFirmwareFile.Width = tw;
                 btnBrowseFirmware.Left = tw + 4;
                 txtBootloaderFile.Width = tw;
@@ -422,6 +380,39 @@ namespace MissionPlanner.GCSViews
             tabsSigning.TabPages.Add(BuildSelfTestTab());
             tabsSigning.TabPages.Add(BuildProcedureTab());
             pnl.Controls.Add(tabsSigning);
+        }
+
+        private void BuildRightPanel(Control parent)
+        {
+            var pnl = new Panel { Dock = DockStyle.Fill, Padding = new Padding(4) };
+            parent.Controls.Add(pnl);
+
+            var logHost = new Panel { Dock = DockStyle.Fill, Padding = new Padding(0, 4, 0, 0) };
+            pnl.Controls.Add(logHost);
+
+            var lblTitle = new Label
+            {
+                Text = "Common Status Log",
+                Font = new Font(Font.FontFamily, 9f, FontStyle.Bold),
+                Dock = DockStyle.Top,
+                Height = 22,
+                Padding = new Padding(2, 2, 0, 0)
+            };
+            pnl.Controls.Add(lblTitle);
+
+            txtCommonLog = new TextBox
+            {
+                Dock = DockStyle.Fill,
+                Multiline = true,
+                ReadOnly = true,
+                ScrollBars = ScrollBars.Both,
+                BackColor = Color.FromArgb(15, 15, 15),
+                ForeColor = Color.LightGreen,
+                Font = new Font("Consolas", 8f),
+                WordWrap = false,
+                BorderStyle = BorderStyle.FixedSingle
+            };
+            logHost.Controls.Add(txtCommonLog);
         }
 
         // ── Tab: ArduPilot Ed25519 ───────────────────────────────────────
@@ -571,17 +562,6 @@ namespace MissionPlanner.GCSViews
             scroll.Controls.Add(btnApVerifyApj);
             y += 38;
 
-            // Output
-            scroll.Controls.Add(MakeLabel("Output:", new Point(0, y), w));
-            y += 18;
-            txtApOutput = new TextBox
-            {
-                Location = new Point(0, y), Size = new Size(w, 180),
-                Multiline = true, ReadOnly = true, ScrollBars = ScrollBars.Vertical,
-                Font = new Font("Consolas", 8f), BorderStyle = BorderStyle.FixedSingle
-            };
-            scroll.Controls.Add(txtApOutput);
-
             // Stretch all controls when tab resizes
             scroll.Resize += (s2, e2) =>
             {
@@ -592,7 +572,6 @@ namespace MissionPlanner.GCSViews
                 foreach (Control c in scroll.Controls)
                     if (c is Label l && !l.AutoSize) l.Width = cw;
                 txtApRoot.Width = cw;
-                txtApOutput.Width = cw; txtApOutput.Height = 180;
                 txtApBoard.Width = Math.Min(220, cw);
                 txtApKeyOutDir.Width = tw; btnBrowseKeyOut.Left = tw + 4;
                 txtApBootloaderPath.Width = tw; btnBrowseApBootloader.Left = tw + 4;
@@ -812,60 +791,7 @@ namespace MissionPlanner.GCSViews
         }
 
         // ================================================================
-        // RIGHT PANEL — Live Log
-        // ================================================================
 
-        private void BuildRightPanel(Control parent)
-        {
-            var pnl = new Panel { Dock = DockStyle.Fill, Padding = new Padding(4) };
-            parent.Controls.Add(pnl);
-
-            var lblTitle = new Label
-            {
-                Text = "MissionPlanner Log (Live)",
-                Font = new Font(Font.FontFamily, 9f, FontStyle.Bold),
-                Dock = DockStyle.Top,
-                Height = 22,
-                Padding = new Padding(2, 2, 0, 0)
-            };
-            pnl.Controls.Add(lblTitle);
-
-            var toolRow = new FlowLayoutPanel
-            {
-                Dock = DockStyle.Top,
-                Height = 32,
-                Padding = new Padding(0),
-                FlowDirection = FlowDirection.LeftToRight,
-                WrapContents = false
-            };
-            pnl.Controls.Add(toolRow);
-
-            txtLogFind = new TextBox { Width = 130, Height = 22, Margin = new Padding(0, 4, 4, 0) };
-            toolRow.Controls.Add(txtLogFind);
-
-            btnLogFind = MakeButton("Find", new Point(0, 0), new Size(56, 26));
-            btnLogFind.Margin = new Padding(0, 3, 4, 0);
-            btnLogFind.Click += BtnLogFind_Click;
-            toolRow.Controls.Add(btnLogFind);
-
-            btnLogClear = MakeButton("Clear", new Point(0, 0), new Size(56, 26));
-            btnLogClear.Margin = new Padding(0, 3, 0, 0);
-            btnLogClear.Click += (s, e) => { txtLiveLog.Text = string.Empty; _lastLogPos = 0; };
-            toolRow.Controls.Add(btnLogClear);
-
-            txtLiveLog = new TextBox
-            {
-                Dock = DockStyle.Fill,
-                Multiline = true,
-                ReadOnly = true,
-                ScrollBars = ScrollBars.Both,
-                BackColor = Color.FromArgb(10, 10, 10),
-                ForeColor = Color.LightGreen,
-                Font = new Font("Consolas", 7.5f),
-                WordWrap = false
-            };
-            pnl.Controls.Add(txtLiveLog);
-        }
 
         // ================================================================
         // LEFT PANEL — Event Handlers
@@ -916,7 +842,6 @@ namespace MissionPlanner.GCSViews
             {
                 string line = "[FLASH-STEP " + (++_flashStepCounter).ToString("D2") + "] [op=" + opId + "] " + msg;
                 AppendOutput(line);
-                log.Info(line);
             };
 
             string fwPath = txtFirmwareFile.Text.Trim();
@@ -1015,10 +940,15 @@ namespace MissionPlanner.GCSViews
                 logStep("Release manifest validated: " + manifestResult.Reason);
             }
 
-            if (MessageBox.Show(
-                    "Flash firmware to connected flight controller?\n\nFile: " + Path.GetFileName(fwPath) +
-                    "\nSHA256: " + firmwareHash.Substring(0, 16) + "...",
-                    "Confirm Flash", MessageBoxButtons.YesNo, MessageBoxIcon.Warning) != DialogResult.Yes)
+            string confirmText = "Flash firmware to connected flight controller?" +
+                                 "\n\nFile: " + Path.GetFileName(fwPath) +
+                                 "\n\nSHA256:" +
+                                 "\n" + firmwareHash;
+
+            if (System.Windows.Forms.MessageBox.Show(confirmText,
+                                                     "Confirm Flash",
+                                                     System.Windows.Forms.MessageBoxButtons.YesNo,
+                                                     System.Windows.Forms.MessageBoxIcon.Warning) != System.Windows.Forms.DialogResult.Yes)
             {
                 logStep("Cancelled by user.");
                 Interlocked.Exchange(ref _flashFirmwareInProgress, 0);
@@ -1054,11 +984,11 @@ namespace MissionPlanner.GCSViews
                         {
                             lblHashCheck.Text = "Upload complete. Run Provision Registry to complete secure update.";
                             lblHashCheck.ForeColor = Color.DarkOrange;
-                            CustomMessageBox.Show(
+                            System.Windows.Forms.MessageBox.Show(
                                 "Firmware flashed successfully.\n\nStrict mode is active: run Provision Registry now to complete update compliance.\n\nAlso reconnect manually: unplug the board, wait a few seconds, then plug it back in.",
                                 "Firmware Upload Complete (Pending Provision)",
-                                MessageBoxButtons.OK,
-                                MessageBoxIcon.Warning);
+                                System.Windows.Forms.MessageBoxButtons.OK,
+                                System.Windows.Forms.MessageBoxIcon.Warning);
                         }));
                     }
                     else
@@ -1205,6 +1135,9 @@ namespace MissionPlanner.GCSViews
                 sb.AppendLine("  \"manifest_sig_present\": " + manifestSigPresent + ",");
                 sb.AppendLine("  \"key_evidence_private_sha256\": \"" + EscapeJson(keyEvidencePrivSha) + "\",");
                 sb.AppendLine("  \"key_evidence_public_sha256\": \"" + EscapeJson(keyEvidencePubSha) + "\",");
+                sb.AppendLine("  \"fc_post_status\": \"" + EscapeJson(_lastPostStatusSummary) + "\",");
+                sb.AppendLine("  \"registry_code_hash\": \"" + EscapeJson(_lastRegistryCodeHash) + "\",");
+                sb.AppendLine("  \"registry_data_hash\": \"" + EscapeJson(_lastRegistryDataHash) + "\",");
                 if (mav != null)
                 {
                     sb.AppendLine("  \"fc_sysid\": " + mav.sysid + ",");
@@ -1213,14 +1146,33 @@ namespace MissionPlanner.GCSViews
                 sb.AppendLine("  \"workflow\": \"" + EscapeJson(lblWorkflowStatus.Text) + "\"");
                 sb.AppendLine("}");
 
-                File.WriteAllText(outFile, sb.ToString());
-                log.Info("[AUDIT-EXPORT] Bundle exported: " + outFile);
+                string jsonPayload = sb.ToString();
+                File.WriteAllText(outFile, jsonPayload);
+
+                // HMAC-SHA256 sign the payload if a key is configured
+                string sigFile = string.Empty;
+                string sigStatus = "unsigned (no HMAC key configured)";
+                if (_currentHmacKey != null && _currentHmacKey.Length >= 16)
+                {
+                    byte[] payloadBytes = Encoding.UTF8.GetBytes(jsonPayload);
+                    using (var hmac = new HMACSHA256(_currentHmacKey))
+                    {
+                        byte[] sig = hmac.ComputeHash(payloadBytes);
+                        string sigHex = BitConverter.ToString(sig).Replace("-", string.Empty).ToLowerInvariant();
+                        sigFile = outFile + ".sig";
+                        File.WriteAllText(sigFile, sigHex);
+                        sigStatus = "HMAC-SHA256 signed → " + Path.GetFileName(sigFile);
+                    }
+                }
+
+                log.Info("[AUDIT-EXPORT] Bundle exported: " + outFile + " | " + sigStatus);
                 AppendOutput("[AUDIT] Bundle exported: " + outFile);
+                AppendOutput("[AUDIT] Signature: " + sigStatus);
                 AppendOutput("[AUDIT] manifest_found=" + manifestFound + " sig_present=" + manifestSigPresent);
                 lblExportPath.Text = "Last export: " + outFile;
 
-                MessageBox.Show("Audit bundle exported to:\n" + outFile,
-                    "Export Complete", MessageBoxButtons.OK, MessageBoxIcon.Information);
+                string msg = "Audit bundle exported to:\n" + outFile + "\n\nSignature: " + sigStatus;
+                MessageBox.Show(msg, "Export Complete", MessageBoxButtons.OK, MessageBoxIcon.Information);
             }
             catch (Exception ex)
             {
@@ -1278,8 +1230,11 @@ namespace MissionPlanner.GCSViews
                 try
                 {
                     btnProvisionRegistry.Enabled = false;
+                    SetProgress(92, "Provisioning checksum registry...");
                     AppendOutput("[PROVISION] Native SECURE_COMMAND provisioning started...");
                     await ProvisionChecksumRegistryNativeAsync(fwPath, keyPath, AppendOutput).ConfigureAwait(true);
+                    SetProgress(100, "Provision complete. Registry verified.");
+                    UpdatePostStatus("READY", "checksum registry matches APJ; bootloader will block CRC, signature, and partition-hash mismatches", Color.LimeGreen);
                     SetWorkflowStatus("Provision PASSED: checksum registry matches APJ", Color.LimeGreen);
 
                     MessageBox.Show(
@@ -1293,6 +1248,7 @@ namespace MissionPlanner.GCSViews
                 {
                     AppendOutput("[PROVISION] Native provisioning failed: " + ex.Message);
                     AppendOutput("[PROVISION] Falling back to manual provisioning guidance.");
+                    SetProgress(0, "Provision failed: " + ex.Message);
                     SetWorkflowStatus("Provision FAILED: " + ex.Message, Color.Red);
                     log.Warn("[PROVISION] Native provisioning failed", ex);
                 }
@@ -1310,6 +1266,7 @@ namespace MissionPlanner.GCSViews
             AppendOutput("[PROVISION] To provision using the automation script:");
             AppendOutput("[PROVISION]   cd " + (keyResolved ? keyFolder : "<KeyOutputDir>\\tools\\automation"));
             AppendOutput("[PROVISION]   python provision_checksum_registry.py --port " + portHint + " --firmware \"" + fwPath + "\"" + keyArg);
+            SetProgress(0, "Provision requires manual completion.");
 
             MessageBox.Show(
                 "Checksum registry provision requires ArduPilot's SECURE_COMMAND protocol.\n\n" +
@@ -1418,6 +1375,7 @@ namespace MissionPlanner.GCSViews
             if (!codeOk || !dataOk)
                 throw new InvalidOperationException("Registry verify mismatch. codeOk=" + codeOk + " dataOk=" + dataOk);
 
+            RememberRegistrySnapshot(BitConverter.ToString(codeHash).Replace("-", string.Empty), BitConverter.ToString(dataHash).Replace("-", string.Empty));
             logLine("[PROVISION] SUCCESS — Checksum registry provisioned and verified.");
         }
 
@@ -1842,6 +1800,7 @@ namespace MissionPlanner.GCSViews
                     btnVerifyRegistry.Enabled = false;
                     AppendOutput("[VERIFY] Native SECURE_COMMAND verify started...");
                     await VerifyChecksumRegistryNativeAsync(fwPath, keyPath, AppendOutput).ConfigureAwait(true);
+                    UpdatePostStatus("READY", "checksum registry matches APJ; bootloader will block CRC, signature, and partition-hash mismatches", Color.LimeGreen);
                     SetWorkflowStatus("Verify PASSED: checksum registry matches APJ", Color.LimeGreen);
 
                     MessageBox.Show(
@@ -1857,6 +1816,7 @@ namespace MissionPlanner.GCSViews
                     if (registryUnavailable)
                     {
                         string warning = "Checksum registry not provisioned yet (result=4). Run Provision Registry after flash.";
+                        UpdatePostStatus("NOT PROVISIONED", "bootloader enforcement is waiting for checksum registry provisioning", Color.DarkOrange);
                         AppendOutput("[VERIFY] WARNING: " + warning);
                         SetWorkflowStatus("Verify WARNING: " + warning, Color.Orange);
                         log.Warn("[VERIFY] " + warning);
@@ -1870,6 +1830,7 @@ namespace MissionPlanner.GCSViews
 
                     AppendOutput("[VERIFY] Native verify failed: " + ex.Message);
                     AppendOutput("[VERIFY] Falling back to manual verification guidance.");
+                    UpdatePostStatus("VERIFY FAILED", ex.Message, Color.Red);
                     SetWorkflowStatus("Verify FAILED: " + ex.Message, Color.Red);
                     log.Warn("[VERIFY] Native verification failed", ex);
                 }
@@ -1980,6 +1941,7 @@ namespace MissionPlanner.GCSViews
 
             logLine("[VERIFY] stored_code_hash=" + storedCode);
             logLine("[VERIFY] stored_data_hash=" + storedData);
+            RememberRegistrySnapshot(storedCode, storedData);
 
             if (algoVerified && !algoOk)
                 throw new InvalidOperationException("Registry algorithm mismatch: expected SHA2-256.");
@@ -2067,6 +2029,7 @@ namespace MissionPlanner.GCSViews
                 {
                     statusText = "Auto-verify WARNING: " + keyError;
                     statusColor = Color.Orange;
+                    UpdatePostStatus("KEY UNAVAILABLE", keyError, Color.DarkOrange);
                     AppendOutput("[VERIFY-AUTO] " + statusText);
                     log.Warn("[VERIFY-AUTO] " + keyError);
                 }
@@ -2088,11 +2051,13 @@ namespace MissionPlanner.GCSViews
                         {
                             statusText = "Auto-verify PASSED: registry + manifest OK";
                             statusColor = Color.LimeGreen;
+                            UpdatePostStatus("READY", "checksum registry matches APJ and manifest validation passed", Color.LimeGreen);
                         }
                         else
                         {
                             statusText = "Auto-verify WARNING: registry OK, manifest issue - " + manifestResult.Reason;
                             statusColor = Color.Orange;
+                            UpdatePostStatus("READY WITH MANIFEST WARNING", manifestResult.Reason, Color.Goldenrod);
                         }
                         log.Info("[VERIFY-AUTO] " + statusText);
                     }
@@ -2103,11 +2068,13 @@ namespace MissionPlanner.GCSViews
                         {
                             statusText = "Auto-verify WARNING: checksum registry not provisioned yet (run Provision Registry after flash).";
                             statusColor = Color.Orange;
+                            UpdatePostStatus("NOT PROVISIONED", "bootloader enforcement is waiting for checksum registry provisioning", Color.DarkOrange);
                         }
                         else
                         {
                             statusText = "Auto-verify FAILED: " + vex.Message;
                             statusColor = Color.Red;
+                            UpdatePostStatus("VERIFY FAILED", vex.Message, Color.Red);
                         }
                         AppendOutput("[VERIFY-AUTO] " + statusText);
                         log.Warn("[VERIFY-AUTO] " + statusText);
@@ -2175,17 +2142,24 @@ namespace MissionPlanner.GCSViews
             // MAVLink connection
             bool mavOk = MainV2.comPort?.BaseStream != null && MainV2.comPort.BaseStream.IsOpen;
             sb.AppendLine((mavOk ? "[OK]  " : "[INFO]") + " MAVLink link: " + (mavOk ? "connected" : "not connected"));
+            sb.AppendLine("[INFO] " + _lastPostStatusSummary);
+            if (!string.IsNullOrWhiteSpace(_lastRegistryCodeHash) || !string.IsNullOrWhiteSpace(_lastRegistryDataHash))
+            {
+                sb.AppendLine("[INFO] Registry code hash: " + (string.IsNullOrWhiteSpace(_lastRegistryCodeHash) ? "(none)" : _lastRegistryCodeHash));
+                sb.AppendLine("[INFO] Registry data hash: " + (string.IsNullOrWhiteSpace(_lastRegistryDataHash) ? "(none)" : _lastRegistryDataHash));
+            }
 
             // HMAC key
             bool hmacOk = _currentHmacKey != null && _currentHmacKey.Length >= 16;
             sb.AppendLine((hmacOk ? "[OK]  " : "[WARN]") + " HMAC key: " + (hmacOk ? "configured (" + _currentHmacKey.Length * 8 + "-bit)" : "not configured"));
 
             string result = sb.ToString().TrimEnd();
-            BeginInvoke((MethodInvoker)(() =>
+            AppendOutput("[DIAG] --- Refresh ---");
+            foreach (string line in result.Split(new[] { "\r\n", "\n" }, StringSplitOptions.None))
             {
-                if (txtDiag != null && !txtDiag.IsDisposed)
-                    txtDiag.Text = result;
-            }));
+                if (!string.IsNullOrWhiteSpace(line))
+                    AppendOutput("[DIAG] " + line);
+            }
         }
 
         // ================================================================
@@ -2652,74 +2626,7 @@ namespace MissionPlanner.GCSViews
         }
 
         // ================================================================
-        // Live Log
-        // ================================================================
 
-        private void LogTimer_Tick(object sender, EventArgs e)
-        {
-            TailLogFile();
-        }
-
-        private void TailLogFile()
-        {
-            if (!File.Exists(_logFilePath)) return;
-            try
-            {
-                using (var fs = new FileStream(_logFilePath, FileMode.Open, FileAccess.Read, FileShare.ReadWrite))
-                {
-                    long len = fs.Length;
-                    if (_lastLogPos == 0 && len > 8192)
-                        _lastLogPos = len - 8192;
-
-                    if (len <= _lastLogPos) return;
-
-                    fs.Seek(_lastLogPos, SeekOrigin.Begin);
-                    using (var sr = new StreamReader(fs, Encoding.UTF8, true, 4096, true))
-                    {
-                        string newText = sr.ReadToEnd();
-                        _lastLogPos = len;
-
-                        if (!string.IsNullOrEmpty(newText))
-                        {
-                            BeginInvoke((MethodInvoker)(() =>
-                            {
-                                if (txtLiveLog == null || txtLiveLog.IsDisposed) return;
-                                const int maxChars = 200000;
-                                if (txtLiveLog.TextLength + newText.Length > maxChars)
-                                    txtLiveLog.Text = txtLiveLog.Text.Substring(txtLiveLog.TextLength / 2);
-                                txtLiveLog.AppendText(newText);
-                                txtLiveLog.SelectionStart = txtLiveLog.TextLength;
-                                txtLiveLog.ScrollToCaret();
-                            }));
-                        }
-                    }
-                }
-            }
-            catch { /* log file may be locked momentarily */ }
-        }
-
-        private void BtnLogFind_Click(object sender, EventArgs e)
-        {
-            string term = txtLogFind?.Text?.Trim() ?? string.Empty;
-            if (string.IsNullOrWhiteSpace(term) || txtLiveLog == null) return;
-
-            int start = txtLiveLog.SelectionStart + txtLiveLog.SelectionLength;
-            int idx = txtLiveLog.Text.IndexOf(term, start, StringComparison.OrdinalIgnoreCase);
-            if (idx < 0)
-                idx = txtLiveLog.Text.IndexOf(term, 0, StringComparison.OrdinalIgnoreCase);
-
-            if (idx >= 0)
-            {
-                txtLiveLog.Focus();
-                txtLiveLog.Select(idx, term.Length);
-                txtLiveLog.ScrollToCaret();
-            }
-            else
-            {
-                MessageBox.Show("\"" + term + "\" not found in current log view.",
-                    "Find", MessageBoxButtons.OK, MessageBoxIcon.Information);
-            }
-        }
 
         // ================================================================
         // ArduPilot Ed25519 (WSL bridge)
@@ -2764,7 +2671,6 @@ namespace MissionPlanner.GCSViews
                 return;
 
             btnApGenerateKeys.Enabled = false;
-            txtApOutput.Text = string.Empty;
             AppendApLog("[KEYGEN] Board: " + board + "  Output: " + outDir);
 
             try
@@ -2854,7 +2760,6 @@ namespace MissionPlanner.GCSViews
             { ShowErr("Enter the board name and ArduPilot WSL repo path."); return; }
 
             btnApBuildFwBl.Enabled = false;
-            txtApOutput.Text = string.Empty;
             AppendApLog("[BUILD] Building firmware + bootloader for board: " + board);
 
             try
@@ -3260,7 +3165,6 @@ namespace MissionPlanner.GCSViews
             { ShowErr("Enter the board name and ArduPilot WSL repo path."); return; }
 
             btnApBuildBootloader.Enabled = false;
-            txtApOutput.Text = string.Empty;
             AppendApLog("[BL-BUILD] Building secure bootloader for: " + board);
 
             try
@@ -3402,7 +3306,6 @@ namespace MissionPlanner.GCSViews
             { ShowErr("Enter the ArduPilot WSL repo path."); return; }
 
             btnApSignFw.Enabled = false;
-            txtApOutput.Text = string.Empty;
             AppendApLog("[SIGN] Signing: " + Path.GetFileName(apjPath));
             AppendApLog("[SIGN] Key: " + Path.GetFileName(keyPath));
 
@@ -4085,46 +3988,41 @@ print('Wrote %s' % args.apj_file)
         {
             string line = "[" + DateTime.UtcNow.ToString("HH:mm:ss") + "] " + msg;
             log.Info(msg);
-            BeginInvoke((MethodInvoker)(() =>
-            {
-                if (txtOutput == null || txtOutput.IsDisposed) return;
-                if (txtOutput.TextLength > 50000)
-                    txtOutput.Text = txtOutput.Text.Substring(txtOutput.TextLength / 2);
-                txtOutput.AppendText(line + Environment.NewLine);
-                txtOutput.SelectionStart = txtOutput.TextLength;
-                txtOutput.ScrollToCaret();
-            }));
+            AppendCommonLog(line);
         }
 
         private void AppendApLog(string msg)
         {
+            string line = "[" + DateTime.UtcNow.ToString("HH:mm:ss") + "] " + msg;
+            log.Info(msg);
+            AppendCommonLog(line);
+        }
+
+        private void AppendCommonLog(string line)
+        {
             BeginInvoke((MethodInvoker)(() =>
             {
-                if (txtApOutput == null || txtApOutput.IsDisposed) return;
-                if (txtApOutput.TextLength > 60000)
-                    txtApOutput.Text = txtApOutput.Text.Substring(txtApOutput.TextLength / 2);
-                txtApOutput.AppendText(msg + Environment.NewLine);
-                txtApOutput.SelectionStart = txtApOutput.TextLength;
-                txtApOutput.ScrollToCaret();
+                if (txtCommonLog == null || txtCommonLog.IsDisposed) return;
+                if (txtCommonLog.TextLength > 120000)
+                    txtCommonLog.Text = txtCommonLog.Text.Substring(txtCommonLog.TextLength / 2);
+                txtCommonLog.AppendText(line + Environment.NewLine);
+                txtCommonLog.SelectionStart = txtCommonLog.TextLength;
+                txtCommonLog.ScrollToCaret();
             }));
         }
+
+
 
         private void SetProgress(int pct, string status)
         {
             BeginInvoke((MethodInvoker)(() =>
             {
-                if (progressBar != null)
-                {
-                    progressBar.Value = Math.Max(0, Math.Min(100, pct));
-                    progressBar.Style = pct > 0 ? ProgressBarStyle.Continuous : ProgressBarStyle.Blocks;
-                }
-                if (lblProgressStatus != null)
-                {
-                    lblProgressStatus.Text = status;
-                    lblProgressStatus.ForeColor = pct >= 100 ? Color.LimeGreen
-                        : pct == 0 ? Color.Red
-                        : Color.Gray;
-                }
+                if (progressBar == null || progressBar.IsDisposed)
+                    return;
+
+                int clamped = Math.Max(0, Math.Min(100, pct));
+                progressBar.Value = clamped;
+                progressBar.Style = clamped > 0 ? ProgressBarStyle.Continuous : ProgressBarStyle.Blocks;
             }));
         }
 
@@ -4136,6 +4034,28 @@ print('Wrote %s' % args.apj_file)
                     return;
                 lblWorkflowStatus.Text = text;
                 lblWorkflowStatus.ForeColor = color;
+            }));
+        }
+
+        private void RememberRegistrySnapshot(string codeHash, string dataHash)
+        {
+            _lastRegistryCodeHash = codeHash ?? string.Empty;
+            _lastRegistryDataHash = dataHash ?? string.Empty;
+        }
+
+        private void UpdatePostStatus(string state, string detail, Color color)
+        {
+            string suffix = string.IsNullOrWhiteSpace(detail) ? string.Empty : " - " + detail;
+            string text = "FC POST status: " + state + suffix;
+            _lastPostStatusSummary = text;
+
+            BeginInvoke((MethodInvoker)(() =>
+            {
+                if (lblHashCheck == null || lblHashCheck.IsDisposed)
+                    return;
+
+                lblHashCheck.Text = text;
+                lblHashCheck.ForeColor = color;
             }));
         }
 
@@ -4179,10 +4099,14 @@ print('Wrote %s' % args.apj_file)
             if (btnProvisionRegistry != null) btnProvisionRegistry.Enabled = canAdmin;
             if (btnVerifyRegistry != null) btnVerifyRegistry.Enabled = canOperate;
             if (btnExportAudit != null) btnExportAudit.Enabled = canOperate;
+            if (btnOpenExportFolder != null) btnOpenExportFolder.Enabled = canOperate;
+            if (btnApCheckWsl != null) btnApCheckWsl.Enabled = canOperate;
             if (btnApGenerateKeys != null) btnApGenerateKeys.Enabled = canAdmin;
             if (btnApBuildFwBl != null) btnApBuildFwBl.Enabled = canAdmin;
             if (btnApBuildBootloader != null) btnApBuildBootloader.Enabled = canAdmin;
+            if (btnApVerifyBootloader != null) btnApVerifyBootloader.Enabled = canOperate;
             if (btnApSignFw != null) btnApSignFw.Enabled = canAdmin;
+            if (btnApVerifyApj != null) btnApVerifyApj.Enabled = canOperate;
             if (btnImportCert != null) btnImportCert.Enabled = canAdmin;
             if (btnSignWithCert != null) btnSignWithCert.Enabled = canAdmin && _loadedCert != null && _loadedCert.HasPrivateKey;
             if (btnGenerateHmac != null) btnGenerateHmac.Enabled = canAdmin;
