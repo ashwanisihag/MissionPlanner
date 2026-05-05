@@ -905,7 +905,7 @@ namespace MissionPlanner.GCSViews
                     {
                         BeginInvoke((MethodInvoker)(() =>
                         {
-                            proceed = MessageBox.Show(
+                            proceed = ShowForegroundMessageBox(
                                 "No release_manifest.json was found near this firmware file.\n\n" +
                                 "Manifest validation ensures the firmware matches a signed, manufacturer-approved release.\n\n" +
                                 "Proceed without manifest verification?",
@@ -945,10 +945,10 @@ namespace MissionPlanner.GCSViews
                                  "\n\nSHA256:" +
                                  "\n" + firmwareHash;
 
-            if (System.Windows.Forms.MessageBox.Show(confirmText,
-                                                     "Confirm Flash",
-                                                     System.Windows.Forms.MessageBoxButtons.YesNo,
-                                                     System.Windows.Forms.MessageBoxIcon.Warning) != System.Windows.Forms.DialogResult.Yes)
+            if (ShowForegroundMessageBox(confirmText,
+                                         "Confirm Flash",
+                                         System.Windows.Forms.MessageBoxButtons.YesNo,
+                                         System.Windows.Forms.MessageBoxIcon.Warning) != System.Windows.Forms.DialogResult.Yes)
             {
                 logStep("Cancelled by user.");
                 Interlocked.Exchange(ref _flashFirmwareInProgress, 0);
@@ -1887,6 +1887,7 @@ namespace MissionPlanner.GCSViews
                     AppendOutput("[VERIFY] Falling back to manual verification guidance.");
                     UpdatePostStatus("VERIFY FAILED", ex.Message, Color.Red);
                     SetWorkflowStatus("Verify FAILED: " + ex.Message, Color.Red);
+                    WriteComplianceMismatchLog(ex.Message, "ManualVerifyRegistry");
                     log.Warn("[VERIFY] Native verification failed", ex);
                 }
                 finally
@@ -2130,6 +2131,8 @@ namespace MissionPlanner.GCSViews
                             statusText = "Auto-verify FAILED: " + vex.Message;
                             statusColor = Color.Red;
                             UpdatePostStatus("VERIFY FAILED", vex.Message, Color.Red);
+                            WriteComplianceMismatchLog(vex.Message, "AutoVerifyOnConnect");
+                            _ = SendChecksumMismatchDisarmAsync();
                         }
                         AppendOutput("[VERIFY-AUTO] " + statusText);
                         log.Warn("[VERIFY-AUTO] " + statusText);
@@ -2152,6 +2155,104 @@ namespace MissionPlanner.GCSViews
             finally
             {
                 Interlocked.Exchange(ref _autoVerifyInProgress, 0);
+            }
+        }
+
+        // ================================================================
+        // Compliance Mismatch Logging + Disarm
+        // ================================================================
+
+        /// <summary>
+        /// Appends a tamper-evident compliance entry to the persistent log file and
+        /// the audit_exports folder whenever a firmware checksum/signature mismatch
+        /// is detected.  Never throws — logging failure must not suppress the mismatch
+        /// error path.
+        /// </summary>
+        private void WriteComplianceMismatchLog(string reason, string source = "")
+        {
+            try
+            {
+                string ts       = DateTime.UtcNow.ToString("o");
+                string port     = MainV2.comPortName ?? string.Empty;
+                string firmware = string.Empty;
+                try { firmware = txtFirmwareFile?.Text?.Trim() ?? string.Empty; } catch { }
+
+                string entry = string.Format(
+                    "[{0}] CHECKSUM_MISMATCH | source={1} | port={2} | firmware={3} | reason={4}{5}",
+                    ts,
+                    string.IsNullOrWhiteSpace(source) ? "FirmwareIntegrityCheck" : source,
+                    port,
+                    firmware,
+                    reason,
+                    Environment.NewLine);
+
+                // 1. Append to the persistent MissionPlanner compliance log
+                try
+                {
+                    string dir = Path.GetDirectoryName(_logFilePath);
+                    if (!string.IsNullOrWhiteSpace(dir))
+                        Directory.CreateDirectory(dir);
+                    File.AppendAllText(_logFilePath, entry, System.Text.Encoding.UTF8);
+                }
+                catch (Exception ioEx)
+                {
+                    log.Warn("[MISMATCH-LOG] Could not write to compliance log: " + ioEx.Message);
+                }
+
+                // 2. Also append to audit_exports/checksum_mismatch.log for easy retrieval
+                try
+                {
+                    Directory.CreateDirectory(_auditExportFolder);
+                    string mismatchFile = Path.Combine(_auditExportFolder, "checksum_mismatch.log");
+                    File.AppendAllText(mismatchFile, entry, System.Text.Encoding.UTF8);
+                }
+                catch (Exception ioEx)
+                {
+                    log.Warn("[MISMATCH-LOG] Could not write to audit mismatch log: " + ioEx.Message);
+                }
+
+                log.Error("[MISMATCH] " + entry.TrimEnd());
+            }
+            catch (Exception ex)
+            {
+                log.Warn("[MISMATCH-LOG] WriteComplianceMismatchLog failed: " + ex.Message);
+            }
+        }
+
+        /// <summary>
+        /// Sends MAVLink COMMAND_LONG MAV_CMD_COMPONENT_ARM_DISARM (disarm, force)
+        /// to prevent the RPAS from being operated with mismatched firmware.
+        /// </summary>
+        private async Task SendChecksumMismatchDisarmAsync()
+        {
+            try
+            {
+                if (MainV2.comPort?.BaseStream == null || !MainV2.comPort.BaseStream.IsOpen)
+                    return;
+
+                log.Warn("[MISMATCH] Sending forced disarm due to firmware checksum mismatch.");
+                AppendOutput("[MISMATCH] Sending MAVLink disarm — firmware integrity check failed.");
+
+                await Task.Run(() =>
+                {
+                    try
+                    {
+                        // param1=0 → disarm, param2=21196 → force magic
+                        MainV2.comPort.doCommand(
+                            MAVLink.MAV_CMD.COMPONENT_ARM_DISARM,
+                            0f,       // disarm
+                            21196f,   // force magic
+                            0, 0, 0, 0, 0);
+                    }
+                    catch (Exception cmdEx)
+                    {
+                        log.Warn("[MISMATCH] Disarm command failed: " + cmdEx.Message);
+                    }
+                }).ConfigureAwait(false);
+            }
+            catch (Exception ex)
+            {
+                log.Warn("[MISMATCH] SendChecksumMismatchDisarmAsync failed: " + ex.Message);
             }
         }
 
@@ -2268,6 +2369,7 @@ namespace MissionPlanner.GCSViews
                 {
                     UpdatePostStatus("FAIL", failLine, Color.Red);
                     SetWorkflowStatus("Auto-verify FAILED: bootloader POST indicates firmware check failure", Color.Red);
+                    WriteComplianceMismatchLog(failLine, "BootloaderPostLog");
                     return true;
                 }
 
@@ -2488,13 +2590,67 @@ namespace MissionPlanner.GCSViews
                 UpdateApjStatusLabel(path, lblApApjStatus);
         }
 
+        // Signature version constant from ArduPilot Tools/scripts/signing/make_secure_fw.py
+        private const ulong ApjSigVersion = 30437UL;
+
         private static bool IsApjSigned(string path)
         {
+            // An APJ is considered signed when make_secure_fw.py has embedded the Ed25519
+            // signature into the firmware image inside the APP_DESCRIPTOR area.
+            // "signed_firmware":true only means the board was compiled to enforce signing —
+            // it does NOT mean make_secure_fw.py has already run.  We must inspect the
+            // binary to distinguish "unsigned build for a signing-capable board" from
+            // "build that has the actual 64-byte Ed25519 signature placed".
+            //
+            // make_secure_fw.py packs: [length:4LE][sig_version:8LE=30437][signature:64] into
+            // the descriptor area starting at (descriptor_magic_offset + 8 + some_field_offset).
+            // We scan the 92-byte descriptor field region for the sig_version sentinel.
             if (string.IsNullOrWhiteSpace(path) || !File.Exists(path)) return false;
             try
             {
-                string text = File.ReadAllText(path);
-                return text.Contains("\"signed_firmware\"") || text.Contains("\"signature\"");
+                byte[] binary = ExtractApjBinary(path);
+                int descOffset = FindDescriptorOffset(binary);
+                if (descOffset < 0)
+                {
+                    // No APP_DESCRIPTOR found — cannot determine; allow only if explicit JSON marker
+                    string text = File.ReadAllText(path);
+                    return text.Contains("\"signature\"");
+                }
+
+                // Descriptor fields start 8 bytes past the magic (skip the 8-byte magic itself).
+                int fieldStart = descOffset + 8;
+                int fieldEnd   = fieldStart + 92; // desc_len from make_secure_fw.py
+                if (fieldEnd > binary.Length) return false;
+
+                // Scan for the 8-byte little-endian sig_version (30437) anywhere in the descriptor
+                // fields.  An unsigned build has zeros in the signature slot; a signed build has
+                // the sig_version sentinel followed by 64 non-zero signature bytes.
+                byte[] versionBytes = BitConverter.GetBytes(ApjSigVersion); // little-endian
+                for (int i = fieldStart; i <= fieldEnd - 8; i++)
+                {
+                    if (binary[i]     == versionBytes[0] &&
+                        binary[i + 1] == versionBytes[1] &&
+                        binary[i + 2] == versionBytes[2] &&
+                        binary[i + 3] == versionBytes[3] &&
+                        binary[i + 4] == versionBytes[4] &&
+                        binary[i + 5] == versionBytes[5] &&
+                        binary[i + 6] == versionBytes[6] &&
+                        binary[i + 7] == versionBytes[7])
+                    {
+                        // Make sure there is a non-zero signature following the version sentinel
+                        int sigStart = i + 8;
+                        if (sigStart + 64 <= binary.Length)
+                        {
+                            bool anySigByteNonZero = false;
+                            for (int j = sigStart; j < sigStart + 64; j++)
+                            {
+                                if (binary[j] != 0) { anySigByteNonZero = true; break; }
+                            }
+                            if (anySigByteNonZero) return true;
+                        }
+                    }
+                }
+                return false;
             }
             catch { return false; }
         }
@@ -3080,10 +3236,14 @@ namespace MissionPlanner.GCSViews
                     ? " --private-key \"" + ToWslPath(privKeyWin) + "\""
                     : string.Empty;
 
-                if (string.IsNullOrEmpty(signingKeyArg))
-                    AppendApLog("[BUILD] WARN: private key not found — building without --private-key. SECURE_COMMAND will be denied.");
+                // Build WITHOUT --private-key so the output APJ has the APP_DESCRIPTOR
+                // with an empty (zero-filled) signature slot.  This is the correct
+                // "original / unsigned" artifact.  The existing manual sign step below
+                // calls make_secure_fw.py to produce the Signed/ APJ.
+                if (!string.IsNullOrEmpty(signingKeyArg))
+                    AppendApLog("[BUILD] Private key found — signing will be applied AFTER build via make_secure_fw.py. Waf itself will NOT auto-sign.");
                 else
-                    AppendApLog("[BUILD] Embedding key from: " + Path.GetFileName(privKeyWin));
+                    AppendApLog("[BUILD] WARN: private key not found — auto-sign step will be skipped.");
 
                 string secureBootloaderArg = File.Exists(pubKeyWin)
                     ? " --signing-key \"" + ToWslPath(pubKeyWin) + "\""
@@ -3098,9 +3258,10 @@ namespace MissionPlanner.GCSViews
                     ? string.Empty
                     : "python3 Tools/scripts/build_bootloaders.py" + secureBootloaderArg + " " + board + " && ";
 
+                // Intentionally omit signingKeyArg from waf configure to get an unsigned APJ.
                 string script = "cd \"" + wslRepo + "\" && " +
                     bootloaderBuildScript +
-                    "./waf configure --board " + board + " --signed-fw" + signingKeyArg + " && " +
+                    "./waf configure --board " + board + " --signed-fw && " +
                     "./waf copter";
 
                 await Task.Run(() => RunWslCommand(script, line => AppendApLog(line)));
@@ -4190,9 +4351,44 @@ print('Wrote %s' % args.apj_file)
             }));
         }
 
+        private DialogResult ShowForegroundMessageBox(string msg, string title, MessageBoxButtons buttons, MessageBoxIcon icon)
+        {
+            if (InvokeRequired)
+            {
+                return (DialogResult)Invoke(new Func<DialogResult>(() => ShowForegroundMessageBox(msg, title, buttons, icon)));
+            }
+
+            // ProtectedFirmware is a UserControl; bring the parent Form to the foreground.
+            Form owner = FindForm();
+            if (owner != null)
+            {
+                if (owner.WindowState == FormWindowState.Minimized)
+                    owner.WindowState = FormWindowState.Normal;
+
+                owner.Activate();
+                owner.BringToFront();
+
+                bool restoreTopMost = !owner.TopMost;
+                if (restoreTopMost)
+                    owner.TopMost = true;
+
+                try
+                {
+                    return MessageBox.Show(owner, msg, title, buttons, icon, MessageBoxDefaultButton.Button1);
+                }
+                finally
+                {
+                    if (restoreTopMost)
+                        owner.TopMost = false;
+                }
+            }
+
+            return MessageBox.Show(msg, title, buttons, icon, MessageBoxDefaultButton.Button1);
+        }
+
         private void ShowErr(string msg)
         {
-            MessageBox.Show(msg, "Protected Firmware", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+            ShowForegroundMessageBox(msg, "Protected Firmware", MessageBoxButtons.OK, MessageBoxIcon.Warning);
         }
 
         private bool EnsureProtectedRole(AppUserRole minimumRole, string action)
