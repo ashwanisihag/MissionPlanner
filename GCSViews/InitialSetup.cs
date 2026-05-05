@@ -297,14 +297,18 @@ namespace MissionPlanner.GCSViews
                     AddBackstageViewPage(typeof(ConfigFFT), "FFT Setup", isConnected && gotAllParams, opt);
                 }
             }
-            //if (MainV2.DisplayConfiguration.isAdvancedMode)
-            if (MainV2.DisplayConfiguration.displayTerminal)
+
+            // Always show the Advanced root page to Admins; keep Terminal/REPL role-gated.
+            bool canSeeAdvanced = MainV2.DisplayConfiguration.displayTerminal || RoleBasedAccess.IsInRole(AppUserRole.Admin);
+            if (canSeeAdvanced)
             {
                 var adv = AddBackstageViewPage(typeof(ConfigAdvanced), "Advanced");
 
-                AddBackstageViewPage(typeof(ConfigTerminal), "Terminal", true, adv);
-
-                AddBackstageViewPage(typeof(ConfigREPL), "Script REPL", isConnected, adv);
+                if (MainV2.DisplayConfiguration.displayTerminal)
+                {
+                    AddBackstageViewPage(typeof(ConfigTerminal), "Terminal", true, adv);
+                    AddBackstageViewPage(typeof(ConfigREPL), "Script REPL", isConnected, adv);
+                }
             }
 
             // remeber last page accessed

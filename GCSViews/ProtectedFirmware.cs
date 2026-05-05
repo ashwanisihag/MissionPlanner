@@ -82,6 +82,7 @@ namespace MissionPlanner.GCSViews
         private string  _lastRegistryCodeHash = string.Empty;
         private string  _lastRegistryDataHash = string.Empty;
         private string  _lastPostStatusSummary = "FC POST status: unknown";
+        private string  _lastPostTranscriptPath = string.Empty;
         private int     _flashFirmwareInProgress;
         private int     _flashStepCounter;
         private const string AppSettingApWslRepo   = "ProtFwArduPilotWslRepoPath";
@@ -1135,6 +1136,7 @@ namespace MissionPlanner.GCSViews
                 sb.AppendLine("  \"key_evidence_private_sha256\": \"" + EscapeJson(keyEvidencePrivSha) + "\",");
                 sb.AppendLine("  \"key_evidence_public_sha256\": \"" + EscapeJson(keyEvidencePubSha) + "\",");
                 sb.AppendLine("  \"fc_post_status\": \"" + EscapeJson(_lastPostStatusSummary) + "\",");
+                sb.AppendLine("  \"fc_post_transcript\": \"" + EscapeJson(_lastPostTranscriptPath) + "\",");
                 sb.AppendLine("  \"registry_code_hash\": \"" + EscapeJson(_lastRegistryCodeHash) + "\",");
                 sb.AppendLine("  \"registry_data_hash\": \"" + EscapeJson(_lastRegistryDataHash) + "\",");
                 if (mav != null)
@@ -1171,6 +1173,8 @@ namespace MissionPlanner.GCSViews
                 lblExportPath.Text = "Last export: " + outFile;
 
                 string msg = "Audit bundle exported to:\n" + outFile + "\n\nSignature: " + sigStatus;
+                if (!string.IsNullOrWhiteSpace(_lastPostTranscriptPath))
+                    msg += "\n\nPOST transcript: " + _lastPostTranscriptPath;
                 MessageBox.Show(msg, "Export Complete", MessageBoxButtons.OK, MessageBoxIcon.Information);
             }
             catch (Exception ex)
@@ -1293,8 +1297,6 @@ namespace MissionPlanner.GCSViews
             logLine("[PROVISION] Code hash: " + BitConverter.ToString(codeHash).Replace("-", ""));
             logLine("[PROVISION] Data hash: " + BitConverter.ToString(dataHash).Replace("-", ""));
 
-            byte[] seed = await Task.Run(() => LoadEd25519Seed(privateKeyPath)).ConfigureAwait(false);
-
             uint seq = (uint)(DateTime.UtcNow.Ticks & 0xFFFF);
             byte[] empty = new byte[0];
             byte[] sessionKey = null;
@@ -1308,7 +1310,7 @@ namespace MissionPlanner.GCSViews
                 byte[] signingPayload = tryLegacy
                     ? BuildSigningPayloadLegacyU16(seq, ScOpGetSessionKey, empty, empty)
                     : BuildSigningPayload(seq, ScOpGetSessionKey, empty, empty);
-                byte[] sig = Ed25519Sign(seed, signingPayload);
+                byte[] sig = await SignSecureCommandAsync(privateKeyPath, signingPayload).ConfigureAwait(false);
 
                 var reply = await SendSecureCommandAsync(seq, ScOpGetSessionKey, empty, sig, stepTimeoutMs).ConfigureAwait(false);
                 logLine("[PROVISION] GET_SESSION_KEY " + (tryLegacy ? "legacy-u16" : "primary-u32") + " result=" + reply.result);
@@ -1334,7 +1336,7 @@ namespace MissionPlanner.GCSViews
             byte[] setSigning = legacy
                 ? BuildSigningPayloadLegacyU16(seq, ScOpSetChecksumRegistry, regPayload, sessionKey)
                 : BuildSigningPayload(seq, ScOpSetChecksumRegistry, regPayload, sessionKey);
-            byte[] setSig = Ed25519Sign(seed, setSigning);
+            byte[] setSig = await SignSecureCommandAsync(privateKeyPath, setSigning).ConfigureAwait(false);
             var setReply = await SendSecureCommandAsync(seq, ScOpSetChecksumRegistry, regPayload, setSig, Math.Max(stepTimeoutMs, 25000)).ConfigureAwait(false);
             if (setReply.result != 0)
                 throw new InvalidOperationException("SET_CHECKSUM_REGISTRY failed: result=" + setReply.result);
@@ -1344,7 +1346,7 @@ namespace MissionPlanner.GCSViews
             byte[] getSigning = legacy
                 ? BuildSigningPayloadLegacyU16(seq, ScOpGetChecksumRegistry, empty, sessionKey)
                 : BuildSigningPayload(seq, ScOpGetChecksumRegistry, empty, sessionKey);
-            byte[] getSig = Ed25519Sign(seed, getSigning);
+            byte[] getSig = await SignSecureCommandAsync(privateKeyPath, getSigning).ConfigureAwait(false);
             var getReply = await SendSecureCommandAsync(seq, ScOpGetChecksumRegistry, empty, getSig, stepTimeoutMs).ConfigureAwait(false);
             if (getReply.result != 0)
                 throw new InvalidOperationException("GET_CHECKSUM_REGISTRY failed: result=" + getReply.result);
@@ -1485,6 +1487,60 @@ namespace MissionPlanner.GCSViews
             signer.Init(true, key);
             signer.BlockUpdate(message, 0, message.Length);
             return signer.GenerateSignature();
+        }
+
+        private async Task<byte[]> SignSecureCommandAsync(string privateKeyPath, byte[] message)
+        {
+            if (!File.Exists(privateKeyPath))
+                throw new FileNotFoundException("Private key file not found: " + privateKeyPath);
+
+            string repoPath = txtApRoot?.Text.Trim();
+            if (string.IsNullOrWhiteSpace(repoPath))
+                repoPath = Settings.Instance[AppSettingApWslRepo] ?? string.Empty;
+            if (string.IsNullOrWhiteSpace(repoPath) || !Directory.Exists(repoPath))
+                throw new InvalidOperationException("ArduPilot WSL repo path is not configured.");
+
+            string wslRepo = ToWslPath(repoPath);
+            string wslKey = ToWslPath(privateKeyPath);
+            string messageB64 = Convert.ToBase64String(message ?? new byte[0]);
+
+            string py =
+                "import base64\n" +
+                "import monocypher\n" +
+                "key_text = open('" + wslKey.Replace("\\", "/") + "', 'r').read().strip()\n" +
+                "prefix = 'PRIVATE_KEYV1:'\n" +
+                "if not key_text.startswith(prefix):\n" +
+                "    raise SystemExit('Invalid private key format')\n" +
+                "seed = base64.b64decode(key_text[len(prefix):])\n" +
+                "msg = base64.b64decode('" + messageB64 + "')\n" +
+                "print(base64.b64encode(monocypher.signature_sign(seed, msg)).decode('ascii'))\n";
+
+            string pyB64 = Convert.ToBase64String(Encoding.UTF8.GetBytes(py));
+            string bashCommand = "cd \"" + wslRepo + "\" && python3 -c \"$(echo " + pyB64 + " | base64 -d)\"";
+            string output = await Task.Run(() => RunWslCommand(bashCommand, null)).ConfigureAwait(false);
+
+            if (string.IsNullOrWhiteSpace(output))
+                throw new InvalidOperationException("WSL signing returned no output.");
+
+            string sigB64 = output
+                .Split(new[] { '\r', '\n' }, StringSplitOptions.RemoveEmptyEntries)
+                .Select(line => line.Trim())
+                .LastOrDefault(line => !string.IsNullOrWhiteSpace(line));
+
+            if (string.IsNullOrWhiteSpace(sigB64))
+                throw new InvalidOperationException("WSL signing returned no signature.");
+
+            try
+            {
+                byte[] sig = Convert.FromBase64String(sigB64);
+                if (sig.Length != 64)
+                    throw new InvalidOperationException("WSL signing returned invalid signature length: " + sig.Length);
+                return sig;
+            }
+            catch (FormatException ex)
+            {
+                throw new InvalidOperationException("WSL signing returned invalid base64 signature: " + sigB64, ex);
+            }
         }
 
         private static byte[] LoadEd25519Seed(string privateKeyPath)
@@ -1871,7 +1927,6 @@ namespace MissionPlanner.GCSViews
             logLine("[VERIFY] expected_code_hash=" + expectedCode);
             logLine("[VERIFY] expected_data_hash=" + expectedData);
 
-            byte[] seed = await Task.Run(() => LoadEd25519Seed(privateKeyPath)).ConfigureAwait(false);
             uint seq = (uint)(DateTime.UtcNow.Ticks & 0xFFFF);
             byte[] empty = new byte[0];
             byte[] sessionKey = null;
@@ -1884,7 +1939,7 @@ namespace MissionPlanner.GCSViews
                 byte[] signingPayload = tryLegacy
                     ? BuildSigningPayloadLegacyU16(seq, ScOpGetSessionKey, empty, empty)
                     : BuildSigningPayload(seq, ScOpGetSessionKey, empty, empty);
-                byte[] sig = Ed25519Sign(seed, signingPayload);
+                byte[] sig = await SignSecureCommandAsync(privateKeyPath, signingPayload).ConfigureAwait(false);
                 var reply = await SendSecureCommandAsync(seq, ScOpGetSessionKey, empty, sig, stepTimeoutMs).ConfigureAwait(false);
                 logLine("[VERIFY] GET_SESSION_KEY " + (tryLegacy ? "legacy-u16" : "primary-u32") + " result=" + reply.result);
                 if (reply.result == 0)
@@ -1903,7 +1958,7 @@ namespace MissionPlanner.GCSViews
             byte[] getSigning = legacy
                 ? BuildSigningPayloadLegacyU16(seq, ScOpGetChecksumRegistry, empty, sessionKey)
                 : BuildSigningPayload(seq, ScOpGetChecksumRegistry, empty, sessionKey);
-            byte[] getSig = Ed25519Sign(seed, getSigning);
+            byte[] getSig = await SignSecureCommandAsync(privateKeyPath, getSigning).ConfigureAwait(false);
             var getReply = await SendSecureCommandAsync(seq, ScOpGetChecksumRegistry, empty, getSig, stepTimeoutMs).ConfigureAwait(false);
             if (getReply.result != 0)
                 throw new InvalidOperationException("GET_CHECKSUM_REGISTRY failed: result=" + getReply.result);
@@ -2120,6 +2175,8 @@ namespace MissionPlanner.GCSViews
             try
             {
                 var postLines = new List<string>();
+                var rawLines = new List<string>();
+                string transcriptPath = string.Empty;
 
                 using (var sp = new SerialPort(portName, 115200, Parity.None, 8, StopBits.One))
                 {
@@ -2130,9 +2187,10 @@ namespace MissionPlanner.GCSViews
                     sp.Open();
 
                     AppendOutput("[POST] Listening on " + portName + " for bootloader POST output...");
+                    AppendOutput("[POST] Capturing raw bootloader serial for 5 seconds...");
 
                     var lineBuffer = new StringBuilder();
-                    DateTime deadline = DateTime.UtcNow.AddMilliseconds(2500);
+                    DateTime deadline = DateTime.UtcNow.AddMilliseconds(5000);
 
                     while (DateTime.UtcNow < deadline)
                     {
@@ -2151,8 +2209,12 @@ namespace MissionPlanner.GCSViews
                                 string line = lineBuffer.ToString().Trim();
                                 lineBuffer.Clear();
 
-                                if (!string.IsNullOrWhiteSpace(line) && IsBootPostLine(line))
-                                    postLines.Add(line);
+                                if (!string.IsNullOrWhiteSpace(line))
+                                {
+                                    rawLines.Add(line);
+                                    if (IsBootPostLine(line))
+                                        postLines.Add(line);
+                                }
 
                                 continue;
                             }
@@ -2172,10 +2234,25 @@ namespace MissionPlanner.GCSViews
                     if (lineBuffer.Length > 0)
                     {
                         string tail = lineBuffer.ToString().Trim();
-                        if (!string.IsNullOrWhiteSpace(tail) && IsBootPostLine(tail))
-                            postLines.Add(tail);
+                        if (!string.IsNullOrWhiteSpace(tail))
+                        {
+                            rawLines.Add(tail);
+                            if (IsBootPostLine(tail))
+                                postLines.Add(tail);
+                        }
                     }
                 }
+
+                transcriptPath = PersistBootPostTranscript(portName, rawLines, postLines);
+                _lastPostTranscriptPath = transcriptPath;
+                if (!string.IsNullOrWhiteSpace(transcriptPath))
+                    AppendOutput("[POST] Transcript saved: " + transcriptPath);
+
+                foreach (string line in rawLines.Take(12))
+                    AppendOutput("[POST-RAW] " + line);
+
+                if (rawLines.Count == 0)
+                    AppendOutput("[POST] No bootloader serial output captured on " + portName + " within 5 seconds.");
 
                 if (postLines.Count == 0)
                     return false;
@@ -2219,6 +2296,45 @@ namespace MissionPlanner.GCSViews
                    line.IndexOf("POST FAIL", StringComparison.OrdinalIgnoreCase) >= 0 ||
                    line.IndexOf("Firmware OK", StringComparison.OrdinalIgnoreCase) >= 0 ||
                    line.IndexOf("Firmware Error", StringComparison.OrdinalIgnoreCase) >= 0;
+        }
+
+        private string PersistBootPostTranscript(string portName, IList<string> rawLines, IList<string> matchedLines)
+        {
+            try
+            {
+                Directory.CreateDirectory(_auditExportFolder);
+                string postDir = Path.Combine(_auditExportFolder, "post_logs");
+                Directory.CreateDirectory(postDir);
+
+                string fileName = "boot_post_" + DateTime.UtcNow.ToString("yyyyMMdd_HHmmss") + "_" + portName.Replace(':', '_') + ".log";
+                string path = Path.Combine(postDir, fileName);
+
+                var sb = new StringBuilder();
+                sb.AppendLine("timestamp_utc=" + DateTime.UtcNow.ToString("o"));
+                sb.AppendLine("port=" + portName);
+                sb.AppendLine("matched_count=" + (matchedLines?.Count ?? 0));
+                sb.AppendLine("raw_count=" + (rawLines?.Count ?? 0));
+                sb.AppendLine("--- matched ---");
+                if (matchedLines != null)
+                {
+                    foreach (string line in matchedLines)
+                        sb.AppendLine(line);
+                }
+                sb.AppendLine("--- raw ---");
+                if (rawLines != null)
+                {
+                    foreach (string line in rawLines)
+                        sb.AppendLine(line);
+                }
+
+                File.WriteAllText(path, sb.ToString());
+                return path;
+            }
+            catch (Exception ex)
+            {
+                log.Warn("[POST] Failed to persist bootloader POST transcript", ex);
+                return string.Empty;
+            }
         }
 
         // ================================================================
@@ -2846,7 +2962,7 @@ namespace MissionPlanner.GCSViews
                     if (File.Exists(privKey))
                     {
                         txtApPrivateKey.Text = privKey;
-                        Settings.Instance[AppSettingApPrivKey] = outDir;
+                        Settings.Instance[AppSettingApPrivKey] = privKey;
                         AppendApLog("[KEYGEN] ✓ Private key: " + privKey);
                         MessageBox.Show(
                             "Keys generated!\n\nPrivate: " + privKey + "\n\nNext: build a secure bootloader embedding the public key.",
@@ -2935,9 +3051,56 @@ namespace MissionPlanner.GCSViews
                 AppendApLog("[BUILD] WSL repo: " + wslRepo);
                 AppendApLog("[BUILD] Windows source: " + sourceDirWin);
 
+                // Resolve the private key path to pass to waf --private-key so the matching public key is embedded in the binary.
+                string privKeyWin = string.Empty;
+                {
+                    string privKey = txtApPrivateKey != null ? txtApPrivateKey.Text.Trim() : string.Empty;
+                    if (!File.Exists(privKey))
+                        privKey = Path.Combine(effectiveOutDir, board + "_private_key.dat");
+                    if (File.Exists(privKey))
+                        privKeyWin = privKey;
+                }
+
+                // Resolve the public key path used to build a secure bootloader.
+                string pubKeyWin = string.Empty;
+                if (File.Exists(privKeyWin))
+                {
+                    string candidate = Path.Combine(Path.GetDirectoryName(privKeyWin) ?? effectiveOutDir, board + "_public_key.dat");
+                    if (File.Exists(candidate))
+                        pubKeyWin = candidate;
+                }
+                if (!File.Exists(pubKeyWin))
+                {
+                    string fallbackPub = Path.Combine(effectiveOutDir, board + "_public_key.dat");
+                    if (File.Exists(fallbackPub))
+                        pubKeyWin = fallbackPub;
+                }
+
+                string signingKeyArg = File.Exists(privKeyWin)
+                    ? " --private-key \"" + ToWslPath(privKeyWin) + "\""
+                    : string.Empty;
+
+                if (string.IsNullOrEmpty(signingKeyArg))
+                    AppendApLog("[BUILD] WARN: private key not found — building without --private-key. SECURE_COMMAND will be denied.");
+                else
+                    AppendApLog("[BUILD] Embedding key from: " + Path.GetFileName(privKeyWin));
+
+                string secureBootloaderArg = File.Exists(pubKeyWin)
+                    ? " --signing-key \"" + ToWslPath(pubKeyWin) + "\""
+                    : string.Empty;
+
+                if (string.IsNullOrEmpty(secureBootloaderArg))
+                    AppendApLog("[BUILD] WARN: public key not found - secure bootloader will not be rebuilt.");
+                else
+                    AppendApLog("[BUILD] Rebuilding secure bootloader with key: " + Path.GetFileName(pubKeyWin));
+
+                string bootloaderBuildScript = string.IsNullOrEmpty(secureBootloaderArg)
+                    ? string.Empty
+                    : "python3 Tools/scripts/build_bootloaders.py" + secureBootloaderArg + " " + board + " && ";
+
                 string script = "cd \"" + wslRepo + "\" && " +
-                    "./waf bootloader --board " + board + " && " +
-                    "./waf configure --board " + board + " --signed-fw && " +
+                    bootloaderBuildScript +
+                    "./waf configure --board " + board + " --signed-fw" + signingKeyArg + " && " +
                     "./waf copter";
 
                 await Task.Run(() => RunWslCommand(script, line => AppendApLog(line)));
@@ -2947,6 +3110,14 @@ namespace MissionPlanner.GCSViews
                 {
                     AppendApLog("[BUILD] ERROR: source folder missing: " + sourceDirWin);
                     return;
+                }
+
+                string repoBootloaderWin = Path.Combine(repoPath.Replace('/', '\\'), "Tools", "bootloaders", board + "_bl.bin");
+                string secureBootloaderStagedPath = Path.Combine(origBlDir, "AP_Bootloader.bin");
+                if (File.Exists(repoBootloaderWin))
+                {
+                    File.Copy(repoBootloaderWin, secureBootloaderStagedPath, true);
+                    AppendApLog("[BUILD] copied: " + Path.GetFileName(repoBootloaderWin) + " -> " + secureBootloaderStagedPath);
                 }
 
                 string[] files = Directory.GetFiles(sourceDirWin, "*.*", SearchOption.TopDirectoryOnly);
@@ -2961,6 +3132,13 @@ namespace MissionPlanner.GCSViews
                         continue;
 
                     string fileName = Path.GetFileName(src);
+                    if (string.Equals(fileName, "AP_Bootloader.bin", StringComparison.OrdinalIgnoreCase) &&
+                        File.Exists(secureBootloaderStagedPath))
+                    {
+                        AppendApLog("[BUILD] skip: AP_Bootloader.bin from build/bin (keeping secure bootloader from Tools/bootloaders)");
+                        continue;
+                    }
+
                     bool isBootloader = fileName.IndexOf("bootloader", StringComparison.OrdinalIgnoreCase) >= 0 ||
                                         fileName.IndexOf("_bl", StringComparison.OrdinalIgnoreCase) >= 0;
 
@@ -3997,6 +4175,8 @@ print('Wrote %s' % args.apj_file)
         private void UpdatePostStatus(string state, string detail, Color color)
         {
             string suffix = string.IsNullOrWhiteSpace(detail) ? string.Empty : " - " + detail;
+            if (!string.IsNullOrWhiteSpace(_lastPostTranscriptPath))
+                suffix += " [transcript: " + Path.GetFileName(_lastPostTranscriptPath) + "]";
             string text = "FC POST status: " + state + suffix;
             _lastPostStatusSummary = text;
 
