@@ -15,6 +15,7 @@ using System.Collections.Generic;
 using System.Diagnostics;
 using System.Drawing;
 using System.IO;
+using System.IO.Ports;
 using System.Linq;
 using System.Security.Cryptography;
 using System.Security.Cryptography.X509Certificates;
@@ -46,7 +47,7 @@ namespace MissionPlanner.GCSViews
         // ArduPilot Ed25519
         private Label  lblApWslStatus, lblApBootloaderStatus, lblApApjStatus;
         private Button btnApCheckWsl, btnApGenerateKeys, btnApBuildFwBl;
-        private Button btnApBuildBootloader, btnApVerifyBootloader;
+        private Button btnApVerifyBootloader;
         private Button btnApSignFw, btnApVerifyApj;
         private TextBox txtApRoot, txtApBoard, txtApKeyOutDir;
         private TextBox txtApBootloaderPath, txtApApjPath, txtApPrivateKey;
@@ -91,6 +92,8 @@ namespace MissionPlanner.GCSViews
         private int     _autoVerifyInProgress;
         private DateTime _autoVerifySuppressedUntilUtc = DateTime.MinValue;
         private string  _lastAutoVerifyPort = string.Empty;
+        private DateTime _lastBootPostProbeUtc = DateTime.MinValue;
+        private string  _lastBootPostProbePort = string.Empty;
         private const uint ScOpGetSessionKey = 0;
         private const uint ScOpGetChecksumRegistry = 8;
         private const uint ScOpSetChecksumRegistry = 9;
@@ -505,10 +508,6 @@ namespace MissionPlanner.GCSViews
             lblApBootloaderStatus = new Label { Text = "Bootloader Status: no file", AutoSize = true, Location = new Point(0, y), ForeColor = Color.Gray };
             scroll.Controls.Add(lblApBootloaderStatus);
             y += 22;
-
-            btnApBuildBootloader = MakeButton("Build Secure Bootloader (WSL)", new Point(0, y), new Size(230, 30));
-            btnApBuildBootloader.Click += async (s, e) => await ApBuildBootloaderAsync();
-            scroll.Controls.Add(btnApBuildBootloader);
 
             btnApVerifyBootloader = MakeButton("Verify Bootloader File", new Point(238, y), new Size(160, 30));
             btnApVerifyBootloader.Click += (s, e) => ApVerifyBootloaderFile();
@@ -1977,15 +1976,16 @@ namespace MissionPlanner.GCSViews
                     return;
                 }
 
+                string currentPort = MainV2.comPortName ?? string.Empty;
                 bool mavConnected = MainV2.comPort?.BaseStream != null && MainV2.comPort.BaseStream.IsOpen;
                 bool hasHeartbeat = mavConnected && MainV2.comPort.MAV?.sysid > 0;
                 if (!mavConnected || !hasHeartbeat)
                 {
+                    await TryCaptureBootloaderPostLogAsync(currentPort).ConfigureAwait(true);
                     log.Debug("[VERIFY-AUTO] Skipped: MAVLink not connected or no heartbeat.");
                     return;
                 }
 
-                string currentPort = MainV2.comPortName ?? string.Empty;
                 if (string.Equals(currentPort, _lastAutoVerifyPort, StringComparison.OrdinalIgnoreCase))
                 {
                     log.Debug("[VERIFY-AUTO] Skipped: same port as last auto-verify (" + currentPort + ").");
@@ -2098,6 +2098,127 @@ namespace MissionPlanner.GCSViews
             {
                 Interlocked.Exchange(ref _autoVerifyInProgress, 0);
             }
+        }
+
+        private async Task<bool> TryCaptureBootloaderPostLogAsync(string portName)
+        {
+            if (string.IsNullOrWhiteSpace(portName))
+                return false;
+
+            bool mavStreamOpen = MainV2.comPort?.BaseStream != null && MainV2.comPort.BaseStream.IsOpen;
+            if (mavStreamOpen)
+                return false;
+
+            DateTime now = DateTime.UtcNow;
+            if (string.Equals(portName, _lastBootPostProbePort, StringComparison.OrdinalIgnoreCase) &&
+                (now - _lastBootPostProbeUtc).TotalSeconds < 15)
+                return false;
+
+            _lastBootPostProbePort = portName;
+            _lastBootPostProbeUtc = now;
+
+            try
+            {
+                var postLines = new List<string>();
+
+                using (var sp = new SerialPort(portName, 115200, Parity.None, 8, StopBits.One))
+                {
+                    sp.ReadTimeout = 250;
+                    sp.WriteTimeout = 250;
+                    sp.DtrEnable = false;
+                    sp.RtsEnable = false;
+                    sp.Open();
+
+                    AppendOutput("[POST] Listening on " + portName + " for bootloader POST output...");
+
+                    var lineBuffer = new StringBuilder();
+                    DateTime deadline = DateTime.UtcNow.AddMilliseconds(2500);
+
+                    while (DateTime.UtcNow < deadline)
+                    {
+                        try
+                        {
+                            int ch = sp.ReadChar();
+                            if (ch < 0)
+                                continue;
+
+                            char c = (char)ch;
+                            if (c == '\r')
+                                continue;
+
+                            if (c == '\n')
+                            {
+                                string line = lineBuffer.ToString().Trim();
+                                lineBuffer.Clear();
+
+                                if (!string.IsNullOrWhiteSpace(line) && IsBootPostLine(line))
+                                    postLines.Add(line);
+
+                                continue;
+                            }
+
+                            if (!char.IsControl(c) || c == '\t')
+                            {
+                                if (lineBuffer.Length < 512)
+                                    lineBuffer.Append(c);
+                            }
+                        }
+                        catch (TimeoutException)
+                        {
+                            await Task.Delay(40).ConfigureAwait(false);
+                        }
+                    }
+
+                    if (lineBuffer.Length > 0)
+                    {
+                        string tail = lineBuffer.ToString().Trim();
+                        if (!string.IsNullOrWhiteSpace(tail) && IsBootPostLine(tail))
+                            postLines.Add(tail);
+                    }
+                }
+
+                if (postLines.Count == 0)
+                    return false;
+
+                foreach (string line in postLines.Take(8))
+                    AppendOutput("[POST] " + line);
+
+                string failLine = postLines.FirstOrDefault(l =>
+                    l.IndexOf("POST FAIL", StringComparison.OrdinalIgnoreCase) >= 0 ||
+                    l.IndexOf("Firmware Error", StringComparison.OrdinalIgnoreCase) >= 0);
+
+                if (!string.IsNullOrWhiteSpace(failLine))
+                {
+                    UpdatePostStatus("FAIL", failLine, Color.Red);
+                    SetWorkflowStatus("Auto-verify FAILED: bootloader POST indicates firmware check failure", Color.Red);
+                    return true;
+                }
+
+                string okLine = postLines.FirstOrDefault(l =>
+                    l.IndexOf("POST OK", StringComparison.OrdinalIgnoreCase) >= 0 ||
+                    l.IndexOf("Firmware OK", StringComparison.OrdinalIgnoreCase) >= 0);
+
+                if (!string.IsNullOrWhiteSpace(okLine))
+                {
+                    UpdatePostStatus("OK", okLine, Color.LimeGreen);
+                    return true;
+                }
+
+                return false;
+            }
+            catch (Exception ex)
+            {
+                log.Debug("[POST] Serial POST probe skipped on " + portName + ": " + ex.Message);
+                return false;
+            }
+        }
+
+        private static bool IsBootPostLine(string line)
+        {
+            return line.IndexOf("POST OK", StringComparison.OrdinalIgnoreCase) >= 0 ||
+                   line.IndexOf("POST FAIL", StringComparison.OrdinalIgnoreCase) >= 0 ||
+                   line.IndexOf("Firmware OK", StringComparison.OrdinalIgnoreCase) >= 0 ||
+                   line.IndexOf("Firmware Error", StringComparison.OrdinalIgnoreCase) >= 0;
         }
 
         // ================================================================
@@ -2760,7 +2881,7 @@ namespace MissionPlanner.GCSViews
             { ShowErr("Enter the board name and ArduPilot WSL repo path."); return; }
 
             btnApBuildFwBl.Enabled = false;
-            AppendApLog("[BUILD] Building firmware + bootloader for board: " + board);
+            AppendApLog("[BUILD] Building bootloader + firmware for board: " + board);
 
             try
             {
@@ -2773,12 +2894,10 @@ namespace MissionPlanner.GCSViews
                 string origFwDir   = Path.Combine(effectiveOutDir, "Original",  "Firmware");
                 string origBlDir   = Path.Combine(effectiveOutDir, "Original",  "Bootloader");
                 string signedFwDir = Path.Combine(effectiveOutDir, "Signed",    "Firmware");
-                string signedBlDir = Path.Combine(effectiveOutDir, "Signed",    "Bootloader");
 
                 Directory.CreateDirectory(origFwDir);
                 Directory.CreateDirectory(origBlDir);
                 Directory.CreateDirectory(signedFwDir);
-                Directory.CreateDirectory(signedBlDir);
 
                 // Remove legacy placeholders from earlier staging behavior.
                 foreach (string oldUnsigned in Directory.GetFiles(signedFwDir, "*-unsigned.apj", SearchOption.TopDirectoryOnly))
@@ -2809,7 +2928,6 @@ namespace MissionPlanner.GCSViews
                 AppendApLog("[BUILD] Created folder: " + origFwDir);
                 AppendApLog("[BUILD] Created folder: " + origBlDir);
                 AppendApLog("[BUILD] Created folder: " + signedFwDir);
-                AppendApLog("[BUILD] Created folder: " + signedBlDir);
 
                 string wslRepo = ToWslPath(repoPath);
                 string sourceDirWin = Path.Combine(repoPath.Replace('/', '\\'), "build", board, "bin");
@@ -2818,6 +2936,7 @@ namespace MissionPlanner.GCSViews
                 AppendApLog("[BUILD] Windows source: " + sourceDirWin);
 
                 string script = "cd \"" + wslRepo + "\" && " +
+                    "./waf bootloader --board " + board + " && " +
                     "./waf configure --board " + board + " --signed-fw && " +
                     "./waf copter";
 
@@ -2904,68 +3023,19 @@ namespace MissionPlanner.GCSViews
                     }
                 }
 
-                string[] blFiles = Directory.GetFiles(origBlDir, "*.bin");
+                string stagedBootloader = Path.Combine(origBlDir, "AP_Bootloader.bin");
+                string[] blFiles = File.Exists(stagedBootloader)
+                    ? new[] { stagedBootloader }
+                    : Directory.GetFiles(origBlDir, "*.bin");
                 if (blFiles.Length == 0)
                     blFiles = Directory.GetFiles(origFwDir, "*bl*.bin");
                 if (blFiles.Length > 0)
                 {
                     txtApBootloaderPath.Text = blFiles[0];
-                    lblApBootloaderStatus.Text = "✓ Staged: " + Path.GetFileName(blFiles[0]);
+                    lblApBootloaderStatus.Text = "✓ Staged for STM32 programmer: " + Path.GetFileName(blFiles[0]);
                     lblApBootloaderStatus.ForeColor = Color.LimeGreen;
                     AppendApLog("[BUILD] Bootloader staged: " + Path.GetFileName(blFiles[0]));
-                }
-
-                // SaamGCS-like behavior: auto-generate/copy signed bootloader artifacts on this button.
-                string pubKeyPathWin = Path.Combine(effectiveOutDir, board + "_public_key.dat");
-                if (File.Exists(pubKeyPathWin))
-                {
-                    if (!EnsureArduPilotKeyFormat(pubKeyPathWin, true, AppendApLog))
-                    {
-                        AppendApLog("[BUILD] WARN: public key format invalid for ArduPilot signing: " + pubKeyPathWin);
-                        return;
-                    }
-
-                    string blSignScript = "cd \"" + wslRepo + "\" && " +
-                        "python3 Tools/scripts/build_bootloaders.py " + board + " --signing-key=\"" + ToWslPath(pubKeyPathWin) + "\"";
-                    string blSignResult = await Task.Run(() => RunWslCommand(blSignScript, line => AppendApLog(line)));
-
-                    bool blSignOk = blSignResult != null &&
-                                    blSignResult.IndexOf("Failed to sign bootloader", StringComparison.OrdinalIgnoreCase) < 0 &&
-                                    blSignResult.IndexOf("Build failed:", StringComparison.OrdinalIgnoreCase) < 0 &&
-                                    blSignResult.IndexOf("UnicodeDecodeError", StringComparison.OrdinalIgnoreCase) < 0;
-
-                    if (!blSignOk)
-                    {
-                        AppendApLog("[BUILD] WARN: signed bootloader generation failed; signed/bootloader not updated.");
-                    }
-
-                    if (blSignOk)
-                    {
-                        string[] bootCandidates = Directory.GetFiles(sourceDirWin, "*.bin", SearchOption.TopDirectoryOnly);
-                        int signedCopied = 0;
-                        foreach (string src in bootCandidates)
-                        {
-                            string name = Path.GetFileName(src);
-                            bool looksLikeBootloader = name.IndexOf("bootloader", StringComparison.OrdinalIgnoreCase) >= 0 ||
-                                                       name.IndexOf("_bl", StringComparison.OrdinalIgnoreCase) >= 0;
-                            if (!looksLikeBootloader)
-                                continue;
-
-                            string signedName = Path.GetFileNameWithoutExtension(name) + "-signed" + Path.GetExtension(name);
-                            string signedDest = Path.Combine(signedBlDir, signedName);
-                            File.Copy(src, signedDest, true);
-                            signedCopied++;
-                            AppendApLog("[BUILD] ✓ Signed bootloader staged: " + signedName);
-                            txtApBootloaderPath.Text = signedDest;
-                        }
-
-                        if (signedCopied == 0)
-                            AppendApLog("[BUILD] WARN: no signed bootloader candidate generated in " + sourceDirWin);
-                    }
-                }
-                else
-                {
-                    AppendApLog("[BUILD] WARN: public key not found; skipping signed bootloader generation. Expected: " + pubKeyPathWin);
+                    AppendApLog("[BUILD] Use this plain bootloader with STM32CubeProgrammer: " + blFiles[0]);
                 }
 
                 // ── Generate release manifest (matches SaamGCS build_sign_ardupilot.ps1) ──
@@ -2996,11 +3066,10 @@ namespace MissionPlanner.GCSViews
                 string manifestDir = Path.Combine(outputBaseDir, "Signed");
                 Directory.CreateDirectory(manifestDir);
 
-                // Collect all signed artifacts under Signed/Firmware and Signed/Bootloader
+                // Collect all signed artifacts under Signed/Firmware
                 var artifacts = new List<ManifestArtifactEntry>();
                 string[] subDirs = new[] {
-                    Path.Combine(manifestDir, "Firmware"),
-                    Path.Combine(manifestDir, "Bootloader")
+                    Path.Combine(manifestDir, "Firmware")
                 };
                 foreach (string dir in subDirs)
                 {
@@ -3149,124 +3218,6 @@ namespace MissionPlanner.GCSViews
             {
                 AppendApLog("[MANIFEST] WARN: RSA signature generation failed: " + ex.Message);
                 log.Warn("[MANIFEST] GenerateManifestRsaSignature failed", ex);
-            }
-        }
-
-        private async Task ApBuildBootloaderAsync()
-        {
-            if (!EnsureProtectedRole(AppUserRole.Admin, "build bootloader"))
-                return;
-
-            string board   = txtApBoard.Text.Trim();
-            string repoPath = txtApRoot.Text.Trim();
-            string outDir  = txtApKeyOutDir.Text.Trim();
-
-            if (string.IsNullOrWhiteSpace(board) || string.IsNullOrWhiteSpace(repoPath))
-            { ShowErr("Enter the board name and ArduPilot WSL repo path."); return; }
-
-            btnApBuildBootloader.Enabled = false;
-            AppendApLog("[BL-BUILD] Building secure bootloader for: " + board);
-
-            try
-            {
-                string effectiveOutDir = string.IsNullOrWhiteSpace(outDir)
-                    ? Path.Combine(Environment.CurrentDirectory, "tools")
-                    : outDir;
-                string signedBlDir = Path.Combine(effectiveOutDir, "ed25519", "signed", "bootloader");
-                Directory.CreateDirectory(signedBlDir);
-
-                string pubKeyPathWin = Path.Combine(effectiveOutDir, board + "_public_key.dat");
-                if (!File.Exists(pubKeyPathWin))
-                {
-                    AppendApLog("[BL-BUILD] ERROR: public key not found: " + pubKeyPathWin);
-                    return;
-                }
-                if (!EnsureArduPilotKeyFormat(pubKeyPathWin, true, AppendApLog))
-                {
-                    AppendApLog("[BL-BUILD] ERROR: public key format invalid for ArduPilot signing: " + pubKeyPathWin);
-                    return;
-                }
-                string pubKeyPath = ToWslPath(pubKeyPathWin);
-
-                string keyArg = string.IsNullOrWhiteSpace(pubKeyPath)
-                    ? string.Empty
-                    : " --signing-key=\"" + pubKeyPath + "\"";
-
-                string wslRepo2 = ToWslPath(repoPath);
-                string script = "cd \"" + wslRepo2 + "\" && " +
-                    "python3 Tools/scripts/build_bootloaders.py " + board + keyArg;
-
-                string blResult = await Task.Run(() => RunWslCommand(script, line => AppendApLog(line)));
-                bool blOk = blResult != null &&
-                            blResult.IndexOf("Failed to sign bootloader", StringComparison.OrdinalIgnoreCase) < 0 &&
-                            blResult.IndexOf("Build failed:", StringComparison.OrdinalIgnoreCase) < 0 &&
-                            blResult.IndexOf("UnicodeDecodeError", StringComparison.OrdinalIgnoreCase) < 0;
-                if (!blOk)
-                {
-                    AppendApLog("[BL-BUILD] ERROR: secure bootloader signing failed; signed output not updated.");
-                    return;
-                }
-                AppendApLog("[BL-BUILD] Bootloader build completed.");
-
-                // Prefer legacy output if script writes there, then copy into signed/bootloader
-                string expectedLegacy = Path.Combine(effectiveOutDir, "Signed", "Bootloader", board + "_bl.bin");
-                if (File.Exists(expectedLegacy))
-                {
-                    string baseName = Path.GetFileNameWithoutExtension(expectedLegacy);
-                    string ext = Path.GetExtension(expectedLegacy);
-                    string dest = Path.Combine(signedBlDir, baseName + "-signed" + ext);
-                    File.Copy(expectedLegacy, dest, true);
-                    txtApBootloaderPath.Text = dest;
-                    lblApBootloaderStatus.Text = "✓ Signed bootloader: " + Path.GetFileName(dest);
-                    lblApBootloaderStatus.ForeColor = Color.LimeGreen;
-                    AppendApLog("[BL-BUILD] copied: " + expectedLegacy + " -> " + dest);
-                    return;
-                }
-
-                // Fallback: pull bootloader-like bins from ArduPilot build output
-                string sourceDirWin = Path.Combine(repoPath.Replace('/', '\\'), "build", board, "bin");
-                if (Directory.Exists(sourceDirWin))
-                {
-                    string[] candidates = Directory.GetFiles(sourceDirWin, "*.bin", SearchOption.TopDirectoryOnly);
-                    int copied = 0;
-                    foreach (string src in candidates)
-                    {
-                        string name = Path.GetFileName(src);
-                        bool looksLikeBootloader = name.IndexOf("bootloader", StringComparison.OrdinalIgnoreCase) >= 0 ||
-                                                   name.IndexOf("_bl", StringComparison.OrdinalIgnoreCase) >= 0;
-                        if (!looksLikeBootloader)
-                            continue;
-                        string destBase = Path.GetFileNameWithoutExtension(name);
-                        string destExt = Path.GetExtension(name);
-                        string dest = Path.Combine(signedBlDir, destBase + "-signed" + destExt);
-                        File.Copy(src, dest, true);
-                        copied++;
-                        AppendApLog("[BL-BUILD] copied: " + name + " -> " + signedBlDir);
-                        if (txtApBootloaderPath.Text.Length == 0)
-                            txtApBootloaderPath.Text = dest;
-                    }
-                    if (copied > 0)
-                    {
-                        lblApBootloaderStatus.Text = "✓ Signed bootloader staged in " + signedBlDir;
-                        lblApBootloaderStatus.ForeColor = Color.LimeGreen;
-                    }
-                    else
-                    {
-                        AppendApLog("[BL-BUILD] WARN: no bootloader-like .bin found in " + sourceDirWin);
-                    }
-                }
-                else
-                {
-                    AppendApLog("[BL-BUILD] WARN: source folder not found: " + sourceDirWin);
-                }
-            }
-            catch (Exception ex)
-            {
-                AppendApLog("[BL-BUILD] ERROR: " + ex.Message);
-            }
-            finally
-            {
-                btnApBuildBootloader.Enabled = true;
             }
         }
 
@@ -4103,7 +4054,6 @@ print('Wrote %s' % args.apj_file)
             if (btnApCheckWsl != null) btnApCheckWsl.Enabled = canOperate;
             if (btnApGenerateKeys != null) btnApGenerateKeys.Enabled = canAdmin;
             if (btnApBuildFwBl != null) btnApBuildFwBl.Enabled = canAdmin;
-            if (btnApBuildBootloader != null) btnApBuildBootloader.Enabled = canAdmin;
             if (btnApVerifyBootloader != null) btnApVerifyBootloader.Enabled = canOperate;
             if (btnApSignFw != null) btnApSignFw.Enabled = canAdmin;
             if (btnApVerifyApj != null) btnApVerifyApj.Enabled = canOperate;
