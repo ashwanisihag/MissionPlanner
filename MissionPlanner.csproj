@@ -1540,7 +1540,9 @@
     <Compile Include="GCSViews\ConfigurationView\ConfigRawParams.cs">
       <SubType>UserControl</SubType>
     </Compile>
-    <Compile Include="GCSViews\ConfigurationView\ConfigRawParamsList.cs" />
+    <Compile Include="GCSViews\ConfigurationView\ConfigRawParamsList.cs">
+      <SubType>UserControl</SubType>
+    </Compile>
     <Compile Include="GCSViews\ConfigurationView\ConfigSimplePids.cs">
       <SubType>UserControl</SubType>
     </Compile>

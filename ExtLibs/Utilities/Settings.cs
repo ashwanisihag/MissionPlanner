@@ -325,7 +325,7 @@ namespace MissionPlanner.Utilities
             return path;
         }
 
-        public static string CustomUserDataDirectory = "C:\\Users\\Aryuan Sihag\\AppData\\Local";
+        public static string CustomUserDataDirectory = "";
 
         /// <summary>
         /// User specific data

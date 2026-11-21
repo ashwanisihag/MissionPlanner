@@ -1,7 +1,7 @@
 {
   "schemaVersion": "1.0",
   "manifestType": "ardupilot-secure-release",
-  "generatedAtUtc": "2026-05-05T10:54:57.1563229Z",
+  "generatedAtUtc": "2026-05-06T17:06:10.1695361Z",
   "board": "Pixhawk6C",
   "keyEvidence": {
     "privateKeyFile": "Pixhawk6C_private_key.dat",
@@ -13,7 +13,7 @@
     "algorithm": "SHA2-256",
     "code": {
       "itemCount": 1,
-      "aggregateSha256": "3B30B4246417861578201D53794F3D2FA49FF11247A12BBB0CA34D5B9B5FD571"
+      "aggregateSha256": "F36E87262FA913AF900902C4A239C0E55057649A5FFFCD9E1F857C00C8517B3A"
     },
     "data": {
       "itemCount": 0,
@@ -24,7 +24,7 @@
     {
       "relativePath": "Signed/Firmware/arducopter-signed.apj",
       "sizeBytes": 1508396,
-      "sha256": "C0008587895A8DBA283F97E7976A9EE4087506EAA6F6EDA6BA0415458BA7A7DA",
+      "sha256": "CF3B400421AB13CA845FBC74CC9DFEDBF0D603AEAF2CA97CDBE139ECFD37A796",
       "artifactClass": "code"
     }
   ],
